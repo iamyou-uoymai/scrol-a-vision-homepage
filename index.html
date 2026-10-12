@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#090d0f">
+  <meta name="description" content="Scrol-a-Vision is a proposed authoring environment for visual stories directed by scrolling.">
+  <title>Scrol-a-Vision — Stories, directed by scrolling</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #090d0f;
+      --panel: #101517;
+      --text: #f4f0e9;
+      --muted: #a9adae;
+      --line: rgba(237, 231, 220, .15);
+      --accent: #f3a044;
+      --accent-bright: #ffb35c;
+      --max: 1180px;
+      --serif: Georgia, "Times New Roman", serif;
+      --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--sans); line-height: 1.55; }
+    a { color: inherit; text-decoration: none; }
+    button, a { -webkit-tap-highlight-color: transparent; }
+    a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+    .wrap { width: min(var(--max), calc(100% - 48px)); margin-inline: auto; }
+    .eyebrow { color: var(--accent); font-size: .72rem; letter-spacing: .19em; text-transform: uppercase; font-weight: 750; }
+    h1, h2, h3, p { margin-top: 0; }
+    h1, h2, .brand { font-family: var(--serif); font-weight: 500; letter-spacing: -.035em; }
+    h1 { max-width: 660px; margin: 15px 0 20px; font-size: clamp(3.2rem, 7vw, 6.3rem); line-height: .96; }
+    h2 { margin: 10px 0 15px; font-size: clamp(2rem, 3.6vw, 3.15rem); line-height: 1.05; }
+    h3 { font-size: 1.04rem; margin-bottom: 8px; }
+    .muted { color: var(--muted); }
+    .accent { color: var(--accent); }
+    .nav { position: absolute; inset: 0 0 auto; z-index: 5; border-bottom: 1px solid var(--line); }
+    .nav-inner { display: flex; min-height: 76px; align-items: center; justify-content: space-between; gap: 24px; }
+    .brand { font-size: 1.55rem; white-space: nowrap; }
+    .brand span { color: var(--accent); }
+    .nav-links { display: flex; align-items: center; gap: clamp(16px, 3vw, 34px); font-size: .87rem; }
+    .nav-links a:not(.button) { color: #d3d2ce; transition: color .2s ease; }
+    .nav-links a:not(.button):hover { color: var(--accent-bright); }
+    .button { display: inline-flex; align-items: center; justify-content: center; gap: 12px; min-height: 46px; padding: 0 19px; border: 1px solid var(--accent); background: var(--accent); color: #17110a; font-size: .88rem; font-weight: 750; transition: transform .2s ease, background .2s ease; }
+    .button:hover { background: var(--accent-bright); transform: translateY(-2px); }
+    .button.secondary { background: transparent; border-color: rgba(244,240,233,.45); color: var(--text); }
+    .button.secondary:hover { border-color: var(--accent); color: var(--accent-bright); }
+    .hero { position: relative; isolation: isolate; min-height: 690px; display: flex; align-items: center; overflow: hidden; border-bottom: 1px solid var(--line); }
+    .hero::before { content: ""; position: absolute; z-index: -2; inset: 0 0 0 25%; background: url("assets/hero-scene.jpg") center / cover no-repeat; opacity: .82; }
+    .hero::after { content: ""; position: absolute; z-index: -1; inset: 0; background: linear-gradient(90deg, #090d0f 0%, rgba(9,13,15,.98) 18%, rgba(9,13,15,.78) 42%, rgba(9,13,15,.12) 76%, rgba(9,13,15,.38) 100%), linear-gradient(0deg, #090d0f 0%, transparent 22%, transparent 76%, rgba(9,13,15,.35) 100%); }
+    .hero-content { padding-top: 85px; padding-bottom: 80px; }
+    .hero-copy { max-width: 590px; }
+    .hero p { max-width: 490px; color: #c6c8c6; font-size: clamp(1.05rem, 1.6vw, 1.25rem); margin-bottom: 28px; }
+    .actions { display: flex; flex-wrap: wrap; gap: 12px; }
+    .section { padding: 88px 0; border-bottom: 1px solid var(--line); }
+    .split { display: grid; grid-template-columns: 1fr 1fr; gap: clamp(32px, 7vw, 86px); align-items: center; }
+    .manga-strip { display: grid; gap: 8px; }
+    .manga-panel { position: relative; min-height: 105px; overflow: hidden; border: 1px solid var(--line); background: #181d1e; }
+    .manga-panel img { width: 100%; height: 100%; min-height: 105px; display: block; object-fit: cover; filter: saturate(.68) contrast(1.08); }
+    .manga-panel:nth-child(1) { height: 130px; }
+    .manga-panel:nth-child(2) { height: 105px; }
+    .manga-panel:nth-child(3) { height: 125px; }
+    .manga-panel::after { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, rgba(7,10,11,.08), rgba(7,10,11,.45)); pointer-events: none; }
+    .copy-block p { color: var(--muted); max-width: 590px; }
+    .copy-block .lead { color: #d2d2ce; font-size: 1.1rem; }
+    .workflow-head { display: flex; align-items: end; justify-content: space-between; gap: 32px; margin-bottom: 38px; }
+    .workflow-head p { max-width: 430px; margin-bottom: 8px; color: var(--muted); }
+    .workflow { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+    .step { border-top: 1px solid var(--line); padding-top: 22px; }
+    .step-top { display: flex; align-items: center; gap: 13px; margin-bottom: 18px; }
+    .step-number { color: var(--accent); font-size: .8rem; font-weight: 800; letter-spacing: .08em; }
+    .step-icon { display: grid; place-items: center; width: 38px; height: 38px; color: var(--accent); border: 1px solid rgba(243,160,68,.5); }
+    .step-art { aspect-ratio: 16 / 9; margin-bottom: 17px; overflow: hidden; border: 1px solid var(--line); background: #171c1e; }
+    .step-art img { width: 100%; height: 100%; display: block; object-fit: cover; }
+    .step p { color: var(--muted); font-size: .93rem; max-width: 340px; }
+    .directing { background: linear-gradient(180deg, #0b1012, #0a0e10); }
+    .directing-head { display: flex; align-items: end; justify-content: space-between; gap: 30px; margin-bottom: 30px; }
+    .directing-head p { color: var(--muted); max-width: 430px; margin-bottom: 7px; }
+    .model { display: grid; grid-template-columns: 250px 1fr; gap: 22px; }
+    .hierarchy, .timeline { border: 1px solid var(--line); background: rgba(255,255,255,.018); }
+    .hierarchy { padding: 13px; }
+    .tree-row { display: flex; gap: 12px; align-items: center; padding: 12px 10px; border-bottom: 1px solid rgba(255,255,255,.05); font-size: .9rem; }
+    .tree-row:last-child { border: 0; }
+    .tree-row .tree-icon { width: 18px; color: var(--accent); text-align: center; }
+    .tree-row small { display: block; color: var(--muted); font-size: .74rem; }
+    .tree-row.active { background: rgba(243,160,68,.09); border-left: 2px solid var(--accent); }
+    .timeline { padding: 16px; overflow: hidden; }
+    .timeline-top { display: flex; justify-content: space-between; gap: 20px; font-size: .82rem; margin-bottom: 15px; }
+    .timeline-top span:last-child { color: var(--muted); }
+    .frames { display: grid; grid-template-columns: repeat(6, 1fr); gap: 5px; margin-bottom: 17px; }
+    .frame { aspect-ratio: 1.55; border: 1px solid var(--line); background: url("assets/hero-scene.jpg") center / cover; filter: saturate(.65); }
+    .frame:nth-child(2) { background-position: 40% center; }
+    .frame:nth-child(3) { background-position: 65% center; }
+    .frame:nth-child(4) { background-position: right center; }
+    .tracks { display: grid; gap: 9px; }
+    .track { display: grid; grid-template-columns: 78px 1fr; align-items: center; gap: 10px; font-size: .75rem; color: var(--muted); }
+    .track-name { display: flex; gap: 7px; align-items: center; }
+    .track-name i { display: inline-block; width: 7px; height: 7px; background: var(--track); }
+    .track-line { position: relative; height: 13px; background: rgba(255,255,255,.035); border-radius: 2px; }
+    .track-line span { position: absolute; top: 2px; height: 9px; left: var(--left); width: var(--width); background: var(--track); opacity: .8; border-radius: 2px; }
+    .scroll-curve { margin: 14px 0 0 88px; width: calc(100% - 88px); height: 36px; border-bottom: 1px solid rgba(243,160,68,.3); position: relative; }
+    .scroll-curve svg { width: 100%; height: 100%; overflow: visible; }
+    .principles { display: grid; grid-template-columns: 1.2fr repeat(4, 1fr); gap: 22px; }
+    .principles-intro h2 { font-size: clamp(1.8rem, 2.8vw, 2.5rem); }
+    .principle { border-left: 1px solid var(--line); padding-left: 18px; }
+    .principle-icon { color: var(--accent); font-size: 1.45rem; margin-bottom: 15px; }
+    .principle p { color: var(--muted); font-size: .88rem; margin-bottom: 0; }
+    .closing { position: relative; overflow: hidden; padding: 75px 0; background: #171614; }
+    .closing::before { content: ""; position: absolute; inset: 0; background: url("assets/hero-scene.jpg") center 55% / cover; opacity: .3; }
+    .closing::after { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, rgba(9,13,15,.96), rgba(9,13,15,.55)); }
+    .closing-inner { position: relative; z-index: 1; display: flex; justify-content: space-between; align-items: center; gap: 32px; }
+    .closing h2 { max-width: 700px; margin-bottom: 0; }
+    footer { padding: 23px 0; color: var(--muted); font-size: .78rem; }
+    .footer-inner { display: flex; justify-content: space-between; align-items: center; gap: 20px; }
+    .footer-links { display: flex; gap: 22px; }
+    .footer-links a:hover { color: var(--text); }
+    .reveal { opacity: 0; transform: translateY(18px); transition: opacity .65s ease, transform .65s ease; }
+    .reveal.visible { opacity: 1; transform: translateY(0); }
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+      .reveal { opacity: 1; transform: none; }
+    }
+    @media (max-width: 850px) {
+      .hero { min-height: 650px; }
+      .hero::before { inset-left: 0; opacity: .55; }
+      .hero::after { background: linear-gradient(90deg, rgba(9,13,15,.96), rgba(9,13,15,.72)), linear-gradient(0deg, #090d0f, transparent 50%); }
+      .split { grid-template-columns: 1fr; }
+      .manga-strip { grid-template-columns: repeat(3, 1fr); }
+      .manga-panel, .manga-panel:nth-child(n) { height: 150px; }
+      .workflow-head, .directing-head { display: block; }
+      .workflow-head p, .directing-head p { max-width: 600px; }
+      .workflow { grid-template-columns: 1fr; gap: 28px; }
+      .step { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 20px; }
+      .step-top { grid-column: 1 / -1; }
+      .step-art { grid-row: span 2; }
+      .model { grid-template-columns: 1fr; }
+      .principles { grid-template-columns: repeat(2, 1fr); }
+      .principles-intro { grid-column: 1 / -1; }
+    }
+    @media (max-width: 560px) {
+      .wrap { width: min(100% - 32px, var(--max)); }
+      .nav-inner { min-height: 68px; }
+      .brand { font-size: 1.28rem; }
+      .nav-links { gap: 13px; font-size: .78rem; }
+      .nav-links a:nth-child(3) { display: none; }
+      .nav-links .button { min-height: 38px; padding: 0 10px; font-size: .76rem; }
+      .hero { min-height: 620px; }
+      .hero::before { inset: 0; background-position: 56% center; opacity: .47; }
+      h1 { font-size: clamp(3rem, 15vw, 4.5rem); }
+      .section { padding: 62px 0; }
+      .manga-strip { grid-template-columns: 1fr; }
+      .manga-panel, .manga-panel:nth-child(n) { height: 115px; }
+      .step { display: block; }
+      .step-art { aspect-ratio: 16 / 8; }
+      .timeline { padding: 10px; }
+      .timeline-top { font-size: .72rem; }
+      .frames { grid-template-columns: repeat(3, 1fr); }
+      .track { grid-template-columns: 65px 1fr; font-size: .68rem; }
+      .scroll-curve { margin-left: 75px; width: calc(100% - 75px); }
+      .principles { grid-template-columns: 1fr 1fr; gap: 24px 15px; }
+      .principle { padding-left: 12px; }
+      .closing-inner { display: block; }
+      .closing-inner .button { margin-top: 24px; }
+      .footer-inner { align-items: flex-start; flex-direction: column; }
+      .footer-links { flex-wrap: wrap; }
+    }
+  </style>
+</head>
+<body>
+  <header class="nav">
+    <div class="wrap nav-inner">
+      <a class="brand" href="#top" aria-label="Scrol-a-Vision home">Scrol<span>-a-</span>Vision</a>
+      <nav class="nav-links" aria-label="Main navigation">
+        <a href="#concept">Concept</a>
+        <a href="#workflow">Workflow</a>
+        <a href="#principles">Principles</a>
+        <a href="/studio/">Studio</a>
+        <a class="button" href="#concept">Explore the concept <span aria-hidden="true">→</span></a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="top">
+    <section class="hero">
+      <div class="wrap hero-content">
+        <div class="hero-copy">
+          <div class="eyebrow">A new medium for visual storytelling</div>
+          <h1>Stories, directed<br>by <span class="accent">scrolling.</span></h1>
+          <p>An authoring environment for visual stories that unfold through movement, rhythm and reader-controlled pacing.</p>
+          <div class="actions">
+            <a class="button" href="#concept">Explore the concept <span aria-hidden="true">→</span></a>
+            <a class="button secondary" href="#workflow"><span aria-hidden="true">▶</span> See how it works</a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="concept">
+      <div class="wrap split">
+        <div class="manga-strip reveal" aria-label="Illustrative story panels">
+          <div class="manga-panel"><img src="assets/hero-scene.jpg" alt="Illustrated character looking across a cinematic landscape"></div>
+          <div class="manga-panel"><img src="assets/hero-scene.jpg" alt="A distant city framed by mountains at sunset"></div>
+          <div class="manga-panel"><img src="assets/hero-scene.jpg" alt="A dramatic landscape used as a visual story setting"></div>
+        </div>
+        <div class="copy-block reveal">
+          <div class="eyebrow">The problem</div>
+          <h2>Animation tools understand motion. Storytellers think in scenes.</h2>
+          <p class="lead">Creating interactive visual stories can mean translating creative intentions into technical timelines, parameters and triggers.</p>
+          <p>Scrol-a-Vision is a proposed approach built around the way storytellers work — organising stories into chapters, scenes, shots and beats.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="workflow">
+      <div class="wrap">
+        <div class="workflow-head reveal">
+          <div><div class="eyebrow">The workflow</div><h2>From idea to interactive story.</h2></div>
+          <p>A visual workflow for storytellers, illustrators, animators and musicians: compose your world, direct the experience and prepare it for the web.</p>
+        </div>
+        <div class="workflow">
+          <article class="step reveal">
+            <div class="step-top"><span class="step-icon" aria-hidden="true">▧</span><span class="step-number">01</span><h3>Compose</h3></div>
+            <div class="step-art"><img src="assets/hero-scene.jpg" alt="Illustration concept for composing a story scene"></div>
+            <p>Organise illustrations, environments, characters and dialogue into a scene.</p>
+          </article>
+          <article class="step reveal">
+            <div class="step-top"><span class="step-icon" aria-hidden="true">▱</span><span class="step-number">02</span><h3>Direct</h3></div>
+            <div class="step-art"><img src="assets/hero-scene.jpg" alt="Cinematic composition suggesting camera direction and movement"></div>
+            <p>Arrange shots, camera movements, visual beats and audio cues along a scroll timeline.</p>
+          </article>
+          <article class="step reveal">
+            <div class="step-top"><span class="step-icon" aria-hidden="true">◎</span><span class="step-number">03</span><h3>Publish</h3></div>
+            <div class="step-art"><img src="assets/hero-scene.jpg" alt="Landscape illustration representing a published web story"></div>
+            <p>The long-term goal: deliver a responsive interactive story that runs in a browser.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section directing" id="directing">
+      <div class="wrap">
+        <div class="directing-head reveal">
+          <div><div class="eyebrow">The directing model</div><h2>A structure for visual storytelling.</h2></div>
+          <p>Organise work from the big picture to the finest detail. Scroll position becomes the story's playback position.</p>
+        </div>
+        <div class="model reveal">
+          <div class="hierarchy" aria-label="Proposed story hierarchy">
+            <div class="tree-row"><span class="tree-icon">▱</span><div>Project<small>The complete story</small></div></div>
+            <div class="tree-row"><span class="tree-icon">▤</span><div>Chapter<small>Major sections</small></div></div>
+            <div class="tree-row"><span class="tree-icon">☷</span><div>Scene<small>Connected moments</small></div></div>
+            <div class="tree-row active"><span class="tree-icon">▣</span><div>Shot<small>A focused camera setup</small></div></div>
+            <div class="tree-row"><span class="tree-icon">✦</span><div>Beat<small>A single action or event</small></div></div>
+          </div>
+          <div class="timeline" aria-label="Illustrative scroll timeline with camera, character, dialogue, sound and scroll tracks">
+            <div class="timeline-top"><strong>Shot 03 — The Bridge</strong><span>Illustrative timeline · Scroll progress</span></div>
+            <div class="frames" aria-hidden="true"><div class="frame"></div><div class="frame"></div><div class="frame"></div><div class="frame"></div><div class="frame"></div><div class="frame"></div></div>
+            <div class="tracks">
+              <div class="track"><span class="track-name"><i style="--track:#46a9d1"></i>Camera</span><div class="track-line" style="--track:#267ca0"><span style="--left:4%;--width:78%"></span></div></div>
+              <div class="track"><span class="track-name"><i style="--track:#8dc4a6"></i>Character</span><div class="track-line" style="--track:#398b69"><span style="--left:8%;--width:38%"></span><span style="--left:58%;--width:27%"></span></div></div>
+              <div class="track"><span class="track-name"><i style="--track:#f3a044"></i>Dialogue</span><div class="track-line" style="--track:#b96e37"><span style="--left:16%;--width:18%"></span><span style="--left:48%;--width:22%"></span><span style="--left:84%;--width:11%"></span></div></div>
+              <div class="track"><span class="track-name"><i style="--track:#c59de8"></i>Sound</span><div class="track-line" style="--track:#8765ae"><span style="--left:23%;--width:9%"></span><span style="--left:50%;--width:12%"></span><span style="--left:73%;--width:16%"></span></div></div>
+            </div>
+            <div class="scroll-curve" aria-hidden="true"><svg viewBox="0 0 500 36" preserveAspectRatio="none"><path d="M0 30 C65 30 70 8 140 14 S220 31 285 23 S390 5 500 10" fill="none" stroke="#f3a044" stroke-width="2"/><circle cx="140" cy="14" r="3" fill="#f3a044"/><circle cx="285" cy="23" r="3" fill="#f3a044"/><circle cx="420" cy="8" r="3" fill="#f3a044"/></svg></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="principles">
+      <div class="wrap principles">
+        <div class="principles-intro reveal"><div class="eyebrow">Core principles</div><h2>A shared language for creators and readers.</h2></div>
+        <article class="principle reveal"><div class="principle-icon" aria-hidden="true">⌑</div><h3>Story first</h3><p>Scenes and shots are the primary organising concepts.</p></article>
+        <article class="principle reveal"><div class="principle-icon" aria-hidden="true">↕</div><h3>Reader-controlled pacing</h3><p>Readers move through the story at their own speed.</p></article>
+        <article class="principle reveal"><div class="principle-icon" aria-hidden="true">♧</div><h3>Creative collaboration</h3><p>Storytellers, artists, animators and developers share a common structure.</p></article>
+        <article class="principle reveal"><div class="principle-icon" aria-hidden="true">◇</div><h3>Portable stories</h3><p>A long-term goal is to separate story data from the editor and browser runtime.</p></article>
+      </div>
+    </section>
+
+    <section class="closing">
+      <div class="wrap closing-inner">
+        <div><div class="eyebrow">A different way to tell a story</div><h2>Help shape a medium where movement, rhythm and narrative are composed together.</h2></div>
+        <a class="button" href="#top">Explore the concept <span aria-hidden="true">→</span></a>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap footer-inner">
+      <a class="brand" href="#top">Scrol<span>-a-</span>Vision</a>
+      <span>Concept-stage project · © <span id="year"></span> Scrol-a-Vision</span>
+      <nav class="footer-links" aria-label="Footer navigation"><a href="#concept">Concept</a><a href="#workflow">Workflow</a><a href="#principles">Principles</a></nav>
+    </div>
+  </footer>
+  <script>
+    document.getElementById("year").textContent = new Date().getFullYear();
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const revealItems = document.querySelectorAll(".reveal");
+    if ("IntersectionObserver" in window && !reduceMotion) {
+      const observer = new IntersectionObserver((entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            entry.target.classList.add("visible");
+            observer.unobserve(entry.target);
+          }
+        });
+      }, { threshold: 0.12 });
+      revealItems.forEach((item) => observer.observe(item));
+    } else {
+      revealItems.forEach((item) => item.classList.add("visible"));
+    }
+  </script>
+</body>
+</html>
