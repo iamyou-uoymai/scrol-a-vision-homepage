@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { sampleStory } from "./sampleStory";
 import { parseStory, parseStoryJson, StoryFormatError } from "./storyFormat";
 import { LEGACY_STORY_STORAGE_KEY, loadStoredStory, parseImportedStory, saveStoredStory, serializeStory, STORY_STORAGE_KEY } from "./storyStorage";
-import type { LegacyShotV1, Story, StoryV1 } from "../types/story";
+import type { LegacyShotV1, Shot, Story, StoryV1 } from "../types/story";
 
 function copySample(): Story {
   return JSON.parse(JSON.stringify(sampleStory)) as Story;
@@ -48,6 +48,40 @@ describe("portable story format", () => {
 
     const imported = parseImportedStory(serializeStory(story));
     expect(imported.chapters[0].scenes[0].shots[0].animation.camera[1]).toEqual(cameraKeyframe);
+  });
+
+  it("preserves authored shot order and per-shot animation through export, import, save, and reload", () => {
+    const story = copySample();
+    const scene = story.chapters[0].scenes[0];
+    const secondShot: Shot = {
+      id: "shot-beyond-bridge",
+      title: "Beyond the bridge",
+      layers: [],
+      beats: [],
+      animation: {
+        camera: [
+          { id: "keyframe-beyond-bridge-camera", progress: 0, transform: { x: 18, y: -3, scale: 115, rotation: 2 }, easing: "linear" },
+        ],
+        layers: {},
+      },
+    };
+    scene.shots.push(secondShot);
+
+    const imported = parseImportedStory(serializeStory(story));
+    expect(imported.chapters[0].scenes[0].shots.map((shot) => shot.id)).toEqual([
+      "shot-bridge",
+      "shot-beyond-bridge",
+    ]);
+    expect(imported.chapters[0].scenes[0].shots[1].animation).toEqual(secondShot.animation);
+
+    const storage = createMemoryStorage();
+    saveStoredStory(storage, imported);
+    const reloaded = loadStoredStory(storage).story;
+    expect(reloaded.chapters[0].scenes[0].shots.map((shot) => shot.id)).toEqual([
+      "shot-bridge",
+      "shot-beyond-bridge",
+    ]);
+    expect(reloaded.chapters[0].scenes[0].shots[1].animation.camera[0].transform.x).toBe(18);
   });
 
   it("migrates valid version 1 projects to version 2 with empty authored tracks", () => {

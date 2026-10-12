@@ -66,10 +66,12 @@ button { color: inherit; }
 .scene-item:hover { background: #212624; }
 .scene-item.is-active { border-left-color: #707c71; background: #202522; color: #d8d9d2; }
 .scene-index { color: var(--dim); font: 9px var(--mono); }
+.scene-player-badge { flex: 0 0 auto; margin-left: auto; color: #bb8a53; font: 8px var(--mono); }
 .shot-heading { display: flex; align-items: center; justify-content: space-between; margin: 9px 0 5px 35px; }
 .text-action { padding: 3px 0; color: #dfa35d; font: 500 10px var(--mono); }
 .text-action:hover { color: #ffd092; }
 .shot-list { display: grid; gap: 3px; margin-left: 32px; }
+.shot-playback-note { margin: 8px 0 0 32px; color: var(--dim); font: 9px/1.45 var(--mono); }
 .shot-item { min-height: 32px; display: flex; align-items: center; gap: 9px; padding: 0 9px; border: 0; border-left: 2px solid transparent; background: transparent; color: #bfc2bb; text-align: left; font-size: 11px; cursor: pointer; }
 .shot-item:hover { background: #212624; }
 .shot-item.is-active { border-left-color: var(--amber); background: #262721; color: #f3d0a1; }

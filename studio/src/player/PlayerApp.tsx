@@ -8,6 +8,7 @@ import type { LayerTransform, Shot, Story, VisualLayer } from "../types/story";
 import { DEFAULT_CAMERA_TRANSFORM, evaluateAnimationTrack } from "../data/animation";
 import {
   mapScrollToProgress,
+  resolveShotAtProgress,
   visibilityThroughBeat,
 } from "./progress";
 
@@ -89,7 +90,7 @@ export function PlayerApp() {
 
   const chapter = story.chapters[0];
   const scene = chapter?.scenes[0];
-  const shot: Shot | undefined = scene?.shots[0];
+  const playback = resolveShotAtProgress(scene?.shots, progress);
 
   async function handleStoryFile(event: ChangeEvent<HTMLInputElement>) {
     const input = event.currentTarget;
@@ -107,10 +108,16 @@ export function PlayerApp() {
     }
   }
 
-  if (!chapter || !scene || !shot) {
-    return <main className="player-empty">This story does not contain a playable shot.</main>;
+  if (!chapter || !scene || !playback) {
+    const message = !chapter
+      ? "This story does not contain a playable chapter."
+      : !scene
+        ? "The first chapter does not contain a playable scene."
+        : `The first scene, ${scene.title}, does not contain any playable shots.`;
+    return <main className="player-empty">{message}</main>;
   }
 
+  const { shot, index: shotIndex, localProgress } = playback;
   const backgroundLayers = shot.layers.filter((layer) => layer.kind === "background");
   const characterLayers = shot.layers.filter((layer) => layer.kind === "character");
   const dialogueLayers = shot.layers.filter((layer) => layer.kind === "dialogue");
@@ -118,14 +125,14 @@ export function PlayerApp() {
   const cameraTrack = shot.animation.camera;
   const camera = prefersReducedMotion
     ? cameraTrack[0]?.transform ?? DEFAULT_CAMERA_TRANSFORM
-    : evaluateAnimationTrack(cameraTrack, progress) ?? DEFAULT_CAMERA_TRANSFORM;
+    : evaluateAnimationTrack(cameraTrack, localProgress) ?? DEFAULT_CAMERA_TRANSFORM;
   const cameraStyle: CSSProperties = {
     transform: `translate3d(${camera.x}%, ${camera.y}%, 0) rotate(${camera.rotation}deg) scale(${camera.scale / 100})`,
   };
 
   return (
     <main className="player-document" aria-label={`${story.title} player`}>
-      <div className="player-runway" ref={runwayRef}>
+      <div className="player-runway" ref={runwayRef} style={{ height: `${100 + scene.shots.length * 200}svh` }}>
         <section className="player-viewport" aria-label={`${scene.title}: ${shot.title}`}>
           <div className="player-world" style={cameraStyle}>
             {backgroundLayers.map((layer) => (
@@ -133,14 +140,14 @@ export function PlayerApp() {
                 className="player-layer player-layer-background"
                 data-layer-id={layer.id}
                 key={layer.id}
-                style={getLayerStyle(layer.kind, layerTransformAtProgress(shot, layer, progress, prefersReducedMotion))}
+                style={getLayerStyle(layer.kind, layerTransformAtProgress(shot, layer, localProgress, prefersReducedMotion))}
               >
                 {layer.assetId === "hero-scene" && <img src={cityBackdrop} alt="" draggable="false" />}
               </div>
             ))}
             <div className="player-atmosphere" aria-hidden="true" />
             {characterLayers.map((layer) => {
-              const transform = layerTransformAtProgress(shot, layer, progress, prefersReducedMotion);
+              const transform = layerTransformAtProgress(shot, layer, localProgress, prefersReducedMotion);
               const artwork = !layer.assetId || layer.assetId === "traveler" ? travelerArtwork : undefined;
               return (
                 <div
@@ -158,12 +165,12 @@ export function PlayerApp() {
               const layer = dialogueLayers[index];
               const fallbackTransform = { x: 50, y: 76, scale: 100, rotation: 0, opacity: 100 };
               const baseTransform = layer
-                ? layerTransformAtProgress(shot, layer, progress, prefersReducedMotion)
+                ? layerTransformAtProgress(shot, layer, localProgress, prefersReducedMotion)
                 : fallbackTransform;
-              const active = progress >= beat.start && progress <= beat.start + beat.duration;
+              const active = localProgress >= beat.start && localProgress <= beat.start + beat.duration;
               const opacity = prefersReducedMotion
                 ? Number(active)
-                : visibilityThroughBeat(progress, beat);
+                : visibilityThroughBeat(localProgress, beat);
               const style: CSSProperties = {
                 ...getLayerStyle("dialogue", baseTransform),
                 opacity: (baseTransform.opacity / 100) * opacity,
@@ -206,12 +213,13 @@ export function PlayerApp() {
             </div>
             <div className="player-progress-row">
               <span>{shot.title}</span>
+              <span className="player-shot-order">SHOT {String(shotIndex + 1).padStart(2, "0")} / {String(scene.shots.length).padStart(2, "0")}</span>
               <output>{String(Math.round(progress * 100)).padStart(2, "0")}%</output>
             </div>
             <div
               className="player-progress-track"
               role="progressbar"
-              aria-label="Story progress"
+              aria-label={`${scene.title} progress`}
               aria-valuemin={0}
               aria-valuemax={100}
               aria-valuenow={Math.round(progress * 100)}

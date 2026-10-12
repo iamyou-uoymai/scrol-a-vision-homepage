@@ -1,7 +1,13 @@
 import { clampProgress } from "../data/animation";
-import type { StoryBeat } from "../types/story";
+import type { Shot, StoryBeat } from "../types/story";
 
 export { clampProgress } from "../data/animation";
+
+export interface ShotPlaybackPosition {
+  shot: Shot;
+  index: number;
+  localProgress: number;
+}
 
 export function mapScrollToProgress(
   scrollPosition: number,
@@ -12,6 +18,32 @@ export function mapScrollToProgress(
   const scrollRange = Math.max(0, runwayHeight - viewportHeight);
   if (scrollRange === 0) return scrollPosition <= runwayStart ? 0 : 1;
   return clampProgress((scrollPosition - runwayStart) / scrollRange);
+}
+
+export function resolveShotAtProgress(
+  shots: readonly Shot[] | undefined,
+  progress: number,
+): ShotPlaybackPosition | undefined {
+  if (!shots?.length) return undefined;
+
+  const normalized = clampProgress(progress);
+  let index = shots.length - 1;
+  for (let boundary = 1; boundary < shots.length; boundary += 1) {
+    if (normalized < boundary / shots.length) {
+      index = boundary - 1;
+      break;
+    }
+  }
+
+  const start = index / shots.length;
+  const end = (index + 1) / shots.length;
+  const localProgress = normalized <= start
+    ? 0
+    : normalized >= end
+      ? 1
+      : (normalized - start) / (end - start);
+
+  return { shot: shots[index], index, localProgress };
 }
 
 export function easeProgress(progress: number): number {

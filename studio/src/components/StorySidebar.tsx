@@ -35,6 +35,7 @@ export function StorySidebar({ story, activeShot, selectedLayerId, selectedScene
               <button type="button" className={`scene-item${item.id === scene.id ? " is-active" : ""}`} key={item.id} onClick={() => onSceneSelect(item)} aria-current={item.id === scene.id ? "page" : undefined}>
                 <span className="scene-index">{String(index + 1).padStart(2, "0")}</span>
                 {item.title}
+                {index === 0 && <span className="scene-player-badge">PLAYER</span>}
               </button>
             ))}
           </div>
@@ -57,6 +58,11 @@ export function StorySidebar({ story, activeShot, selectedLayerId, selectedScene
               </button>
             ))}
           </div>
+          <p className="shot-playback-note">
+            {scene.id === chapter.scenes[0].id
+              ? "Player order · equal scroll per shot · hard cuts at boundaries"
+              : "Player is scoped to the first scene of the first chapter."}
+          </p>
           {scene.shots.length > 1 && (
             <button type="button" className="remove-shot" onClick={onRemoveShot}>Remove selected shot</button>
           )}
