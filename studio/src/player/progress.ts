@@ -1,5 +1,7 @@
 import { clampProgress } from "../data/animation";
-import type { Shot, StoryBeat } from "../types/story";
+import { compilePath, resolvePathPosition } from "../data/pathCompiler";
+import type { CompiledPath, TraversalAllocation } from "../data/pathCompiler";
+import type { CompositionCue, Shot } from "../types/story";
 
 export { clampProgress } from "../data/animation";
 
@@ -7,6 +9,18 @@ export interface ShotPlaybackPosition {
   shot: Shot;
   index: number;
   localProgress: number;
+}
+
+export interface ShotPathAllocation extends TraversalAllocation {
+  shot: Shot;
+}
+
+export function compileShotPath(shots: readonly Shot[] | undefined): CompiledPath<ShotPathAllocation> {
+  return compilePath((shots ?? []).map((shot) => ({
+    id: shot.id,
+    traversalWeight: 1,
+    shot,
+  })));
 }
 
 export function mapScrollToProgress(
@@ -20,30 +34,34 @@ export function mapScrollToProgress(
   return clampProgress((scrollPosition - runwayStart) / scrollRange);
 }
 
+export function scrollPositionForProgress(
+  progress: number,
+  runwayStart: number,
+  runwayHeight: number,
+  viewportHeight: number,
+): number {
+  const scrollRange = Math.max(0, runwayHeight - viewportHeight);
+  return runwayStart + clampProgress(progress) * scrollRange;
+}
+
 export function resolveShotAtProgress(
   shots: readonly Shot[] | undefined,
   progress: number,
 ): ShotPlaybackPosition | undefined {
-  if (!shots?.length) return undefined;
+  return resolveShotAtCompiledPath(compileShotPath(shots), progress);
+}
 
-  const normalized = clampProgress(progress);
-  let index = shots.length - 1;
-  for (let boundary = 1; boundary < shots.length; boundary += 1) {
-    if (normalized < boundary / shots.length) {
-      index = boundary - 1;
-      break;
-    }
-  }
-
-  const start = index / shots.length;
-  const end = (index + 1) / shots.length;
-  const localProgress = normalized <= start
-    ? 0
-    : normalized >= end
-      ? 1
-      : (normalized - start) / (end - start);
-
-  return { shot: shots[index], index, localProgress };
+export function resolveShotAtCompiledPath(
+  path: CompiledPath<ShotPathAllocation>,
+  progress: number,
+): ShotPlaybackPosition | undefined {
+  const position = resolvePathPosition(path, clampProgress(progress));
+  if (position.kind === "empty") return undefined;
+  return {
+    shot: position.interval.source.shot,
+    index: position.index,
+    localProgress: position.localProgress,
+  };
 }
 
 export function easeProgress(progress: number): number {
@@ -51,20 +69,20 @@ export function easeProgress(progress: number): number {
   return value * value * (3 - 2 * value);
 }
 
-export function progressThroughBeat(progress: number, beat?: StoryBeat): number {
-  if (!beat) return 0;
-  const localProgress = (clampProgress(progress) - beat.start) / beat.duration;
+export function progressThroughCue(progress: number, cue?: CompositionCue): number {
+  if (!cue) return 0;
+  const localProgress = (clampProgress(progress) - cue.start) / cue.duration;
   return easeProgress(localProgress);
 }
 
-export function visibilityThroughBeat(progress: number, beat?: StoryBeat): number {
-  if (!beat) return 0;
+export function visibilityThroughCue(progress: number, cue?: CompositionCue): number {
+  if (!cue) return 0;
   const value = clampProgress(progress);
-  const end = beat.start + beat.duration;
-  if (value < beat.start || value > end) return 0;
+  const end = cue.start + cue.duration;
+  if (value < cue.start || value > end) return 0;
   if (end - value <= Number.EPSILON) return 0;
-  const fadeLength = beat.duration * 0.18;
-  const fadeIn = easeProgress((value - beat.start) / fadeLength);
+  const fadeLength = cue.duration * 0.18;
+  const fadeIn = easeProgress((value - cue.start) / fadeLength);
   const fadeOut = easeProgress((end - value) / fadeLength);
   return Math.min(fadeIn, fadeOut);
 }

@@ -1,15 +1,18 @@
 import { describe, expect, it } from "vitest";
 import { evaluateAnimationTrack } from "../data/animation";
 import { sampleStory } from "../data/sampleStory";
-import type { Shot, StoryBeat } from "../types/story";
+import type { CompositionCue, Shot } from "../types/story";
 import {
+  compileShotPath,
   mapScrollToProgress,
-  progressThroughBeat,
+  resolveShotAtCompiledPath,
+  progressThroughCue,
   resolveShotAtProgress,
-  visibilityThroughBeat,
+  scrollPositionForProgress,
+  visibilityThroughCue,
 } from "./progress";
 
-const beat: StoryBeat = {
+const cue: CompositionCue = {
   id: "camera-beat",
   track: "camera",
   label: "Ease in",
@@ -17,7 +20,7 @@ const beat: StoryBeat = {
   duration: 0.4,
 };
 
-const firstShot = sampleStory.chapters[0].scenes[0].shots[0];
+const firstShot = sampleStory.composition.chapters[0].scenes[0].shots[0];
 const secondShot: Shot = {
   ...firstShot,
   id: "shot-second",
@@ -41,6 +44,14 @@ describe("scroll runtime progress", () => {
     expect(mapScrollToProgress(100, 100, 1_100, 600)).toBe(0);
     expect(mapScrollToProgress(350, 100, 1_100, 600)).toBe(0.5);
     expect(mapScrollToProgress(600, 100, 1_100, 600)).toBe(1);
+  });
+
+  it("converts normalized progress to scroll and back for viewport geometry", () => {
+    for (const progress of [0, 0.1, 0.5, 0.93, 1]) {
+      const scrollPosition = scrollPositionForProgress(progress, 120, 2_200, 600);
+      expect(mapScrollToProgress(scrollPosition, 120, 2_200, 600)).toBeCloseTo(progress, 14);
+    }
+    expect(scrollPositionForProgress(0.7, 120, 500, 600)).toBe(120);
   });
 
   it("maps a single shot's entire scene range to its local progress", () => {
@@ -70,6 +81,31 @@ describe("scroll runtime progress", () => {
     expect(resolveShotAtProgress(shots, 1)).toMatchObject({ index: 2, localProgress: 1 });
   });
 
+  it("uses the compiler for Player shot paths while keeping equal-share clamping behavior", () => {
+    const shots = [firstShot, secondShot];
+    const path = compileShotPath(shots);
+
+    expect(path.intervals.map(({ id, traversalWeight, start, end }) => ({ id, traversalWeight, start, end }))).toEqual([
+      { id: firstShot.id, traversalWeight: 1, start: 0, end: 0.5 },
+      { id: secondShot.id, traversalWeight: 1, start: 0.5, end: 1 },
+    ]);
+    expect(resolveShotAtCompiledPath(path, 0.5)).toMatchObject({
+      shot: secondShot,
+      index: 1,
+      localProgress: 0,
+    });
+    expect(resolveShotAtProgress(shots, Number.NaN)).toMatchObject({
+      shot: firstShot,
+      index: 0,
+      localProgress: 0,
+    });
+    expect(resolveShotAtProgress(shots, 1.5)).toMatchObject({
+      shot: secondShot,
+      index: 1,
+      localProgress: 1,
+    });
+  });
+
   it("evaluates the active shot's authored camera and layer tracks at local progress", () => {
     const position = resolveShotAtProgress([firstShot, secondShot], 0.75);
     expect(position).toMatchObject({ shot: secondShot, index: 1, localProgress: 0.5 });
@@ -94,18 +130,18 @@ describe("scroll runtime progress", () => {
     expect(mapScrollToProgress(101, 100, 500, 600)).toBe(1);
   });
 
-  it("eases deterministically through a beat's normalized timing window", () => {
-    expect(progressThroughBeat(0.1, beat)).toBe(0);
-    expect(progressThroughBeat(0.4, beat)).toBe(0.5);
-    expect(progressThroughBeat(0.8, beat)).toBe(1);
+  it("eases deterministically through a cue's normalized timing window", () => {
+    expect(progressThroughCue(0.1, cue)).toBe(0);
+    expect(progressThroughCue(0.4, cue)).toBe(0.5);
+    expect(progressThroughCue(0.8, cue)).toBe(1);
   });
 
-  it("fades dialogue in and out within its normalized beat window", () => {
-    expect(visibilityThroughBeat(0.19, beat)).toBe(0);
-    expect(visibilityThroughBeat(0.2, beat)).toBe(0);
-    expect(visibilityThroughBeat(0.4, beat)).toBe(1);
-    expect(visibilityThroughBeat(0.6, beat)).toBe(0);
-    expect(visibilityThroughBeat(0.61, beat)).toBe(0);
+  it("fades dialogue in and out within its normalized cue window", () => {
+    expect(visibilityThroughCue(0.19, cue)).toBe(0);
+    expect(visibilityThroughCue(0.2, cue)).toBe(0);
+    expect(visibilityThroughCue(0.4, cue)).toBe(1);
+    expect(visibilityThroughCue(0.6, cue)).toBe(0);
+    expect(visibilityThroughCue(0.61, cue)).toBe(0);
   });
 
 });

@@ -1,14 +1,17 @@
 import type { Story } from "../types/story";
 
 export const sampleStory: Story = {
-  schemaVersion: 2,
+  schemaVersion: 3,
+  grammarVersion: null,
   id: "story-after-the-storm",
   title: "After the Storm",
   metadata: {
     createdAt: "2026-10-12T00:00:00.000Z",
     updatedAt: "2026-10-12T00:00:00.000Z",
   },
-  chapters: [
+  movements: [],
+  composition: {
+    chapters: [
     {
       id: "chapter-one",
       title: "The Crossing",
@@ -35,7 +38,7 @@ export const sampleStory: Story = {
                   transform: { x: 41, y: 57, scale: 100, rotation: -3, opacity: 100 },
                 },
               ],
-              beats: [
+              cues: [
                 { id: "beat-camera", track: "camera", label: "Ease in", start: 0.08, duration: 0.4 },
                 { id: "beat-arrival", track: "character", label: "Looks ahead", start: 0.18, duration: 0.15 },
                 { id: "beat-dialogue", track: "dialogue", label: "A long way home", start: 0.39, duration: 0.28 },
@@ -59,5 +62,6 @@ export const sampleStory: Story = {
         },
       ],
     },
-  ],
+    ],
+  },
 };

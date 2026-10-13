@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { DEFAULT_CAMERA_TRANSFORM, evaluateAnimationTrack, getAnimationTrack, type AnimationTransform } from "./data/animation";
+import { useEffect, useMemo, useReducer, useState } from "react";
+import { DEFAULT_CAMERA_TRANSFORM, evaluateAnimationTrack, getAnimationTrack } from "./data/animation";
 import { createSampleStory, firstShot, loadStoredStory, parseImportedStory, saveStoredStory, serializeStory } from "./data/storyStorage";
 import { Inspector } from "./components/Inspector";
 import { KeyframeInspector } from "./components/KeyframeInspector";
@@ -7,15 +7,38 @@ import { ShotCanvas } from "./components/ShotCanvas";
 import { StorySidebar } from "./components/StorySidebar";
 import { Timeline } from "./components/Timeline";
 import { Toolbar } from "./components/Toolbar";
-import type { AnimationTarget, BeatTrack, CameraTransform, Keyframe, KeyframeUpdate, LayerTransform, Scene, Shot, Story, StoryBeat, VisualLayer, VisualLayerUpdate } from "./types/story";
+import type { AnimationTarget, Beat, CameraTransform, CompositionCue, CompositionCueTrack, Keyframe, KeyframeUpdate, LayerTransform, Motif, Passage, PauseInterval, Phrase, PresentationIntervalCue, PresentationIntervalCueUpdate, Scene, Shot, Story, VisualLayerUpdate } from "./types/story";
+import { compileNarrativePath, listNarrativeUnits, narrativeSelectionSpan, projectLocalPathSpan } from "./data/studioPath";
+import type { NarrativeUnitView } from "./data/studioPath";
+import { projectStudioSelection, studioEditorReducer } from "./data/studioSelection";
+import type { StudioEditorState, StudioObjectSelection } from "./data/studioSelection";
+import { reorderSceneShot, updateShotKeyframe, updateShotLayer } from "./data/studioCommands";
+import { addCreativeInterval, removeCreativeInterval, updateCreativeInterval } from "./data/studioCommands";
+import { addBeat, addMovement, addPassage, addPause, addPhrase, addMotif, findNarrativeItem, moveNarrativeItem, removeBeat, removeMovement, removePassage, removePause, removePhrase, removeMotif, updateBeat, updateMovement, updateMotif, updatePassage, updatePause, updatePhrase } from "./data/narrativeCommands";
+import type { NarrativeItem, NarrativeKind } from "./data/narrativeCommands";
+import { validateStory } from "./data/storyValidation";
+import { ValidationPanel } from "./components/ValidationPanel";
+import { compileShotPath } from "./player/progress";
 
-type Selection = { type: "layer"; id: string } | { type: "beat"; id: string } | { type: "keyframe"; target: AnimationTarget; id: string };
-
-function defaultSelection(shot: Shot): Selection {
+function defaultSelection(shot: Shot): StudioObjectSelection {
   const layer = shot.layers[1] ?? shot.layers[0];
-  if (layer) return { type: "layer", id: layer.id };
-  const beat = shot.beats[0];
-  return beat ? { type: "beat", id: beat.id } : { type: "layer", id: "" };
+  if (layer) return { domain: "composition", kind: "layer", id: layer.id };
+  const cue = shot.cues[0];
+  return cue
+    ? { domain: "composition", kind: "cue", id: cue.id }
+    : { domain: "composition", kind: "shot", id: shot.id };
+}
+
+function createInitialEditorState(story: Story): StudioEditorState {
+  const scene = story.composition.chapters[0]?.scenes[0];
+  const shot = scene?.shots[0];
+  return {
+    selection: {
+      object: shot ? defaultSelection(shot) : { domain: "composition", kind: "scene", id: scene?.id ?? "" },
+      compositionContext: { sceneId: scene?.id ?? "", shotId: shot?.id ?? "" },
+    },
+    previewPosition: 0.32,
+  };
 }
 
 function createShot(index: number): Shot {
@@ -37,7 +60,7 @@ function createShot(index: number): Shot {
         transform: { x: 41, y: 57, scale: 100, rotation: 0, opacity: 100 },
       },
     ],
-    beats: [],
+    cues: [],
     animation: { camera: [], layers: {} },
   };
 }
@@ -45,19 +68,6 @@ function createShot(index: number): Shot {
 function defaultAnimationTarget(shot: Shot): AnimationTarget {
   const layer = shot.layers.find((item) => item.kind === "character") ?? shot.layers[0];
   return layer ? { type: "layer", layerId: layer.id } : { type: "camera" };
-}
-
-function mergeKeyframe<TTransform extends AnimationTransform>(
-  keyframe: Keyframe<TTransform>,
-  update: KeyframeUpdate,
-  progress: number,
-): Keyframe<TTransform> {
-  return {
-    ...keyframe,
-    ...update,
-    progress,
-    transform: { ...keyframe.transform, ...update.transform } as TTransform,
-  };
 }
 
 export function StudioApp() {
@@ -72,18 +82,23 @@ export function StudioApp() {
   const [canAutoSave, setCanAutoSave] = useState(initialProject.canAutoSave);
   const [saveStatus, setSaveStatus] = useState(initialProject.status);
   const [feedback, setFeedback] = useState("");
-  const [selectedSceneId, setSelectedSceneId] = useState(() => initialProject.story.chapters[0]?.scenes[0]?.id ?? "");
-  const [selectedShotId, setSelectedShotId] = useState(() => firstShot(initialProject.story)?.id ?? "");
-  const [selection, setSelection] = useState<Selection>(() => {
-    const shot = firstShot(initialProject.story);
-    return shot ? defaultSelection(shot) : { type: "layer", id: "" };
-  });
+  const [editorState, dispatchEditor] = useReducer(studioEditorReducer, initialProject.story, createInitialEditorState);
+  const selection = editorState.selection;
+  const playhead = editorState.previewPosition;
   const [animationTarget, setAnimationTarget] = useState<AnimationTarget>(() => {
     const shot = firstShot(initialProject.story);
     return shot ? defaultAnimationTarget(shot) : { type: "camera" };
   });
-  const [playhead, setPlayhead] = useState(0.32);
   const [previewing, setPreviewing] = useState(false);
+  const [validationOpen, setValidationOpen] = useState(false);
+
+  function setSelection(object: StudioObjectSelection, compositionContext = selection.compositionContext) {
+    dispatchEditor({ type: "select", selection: { object, compositionContext } });
+  }
+
+  function setPlayhead(position: number) {
+    dispatchEditor({ type: "set-preview-position", position });
+  }
 
   useEffect(() => {
     if (!canAutoSave) return;
@@ -99,30 +114,82 @@ export function StudioApp() {
     return () => window.clearTimeout(timeout);
   }, [story, canAutoSave]);
 
-  const currentChapter = story.chapters[0];
-  const currentScene = currentChapter?.scenes.find((scene) => scene.id === selectedSceneId) ?? currentChapter?.scenes[0];
-  const activeShot = currentScene?.shots.find((shot) => shot.id === selectedShotId) ?? currentScene?.shots[0];
+  const currentChapter = story.composition.chapters[0];
+  const currentScene = currentChapter?.scenes.find((scene) => scene.id === selection.compositionContext.sceneId) ?? currentChapter?.scenes[0];
+  const activeShot = currentScene?.shots.find((shot) => shot.id === selection.compositionContext.shotId) ?? currentScene?.shots[0];
+  const compositionPath = useMemo(() => compileShotPath(currentScene?.shots), [currentScene?.shots]);
+  const narrativePath = useMemo(() => compileNarrativePath(story), [story]);
+  const narrativeUnits = useMemo(() => listNarrativeUnits(story), [story]);
+  const validationReport = useMemo(() => validateStory(story), [story]);
+  const motifTargets = useMemo(() => {
+    const compositionTargets = story.composition.chapters.flatMap((chapter) => [
+      { id: chapter.id, label: `Chapter / ${chapter.title}` },
+      ...chapter.scenes.flatMap((scene) => [
+        { id: scene.id, label: `Scene / ${scene.title}` },
+        ...scene.shots.flatMap((shot) => [
+          { id: shot.id, label: `Shot / ${shot.title}` },
+          ...shot.layers.map((layer) => ({ id: layer.id, label: `Layer / ${layer.name}` })),
+          ...shot.cues.map((cue) => ({ id: cue.id, label: `Cue / ${cue.label}` })),
+          ...(shot.creativeIntervals ?? []).map((interval) => ({ id: interval.id, label: `${interval.kind} / ${shot.title}` })),
+        ]),
+      ]),
+    ]);
+    return [
+      ...narrativeUnits.map((unit) => ({ id: unit.id, label: `${unit.kind} / ${unit.title}` })),
+      ...compositionTargets,
+    ];
+  }, [narrativeUnits, story.composition.chapters]);
+  const selectionProjection = projectStudioSelection(selection);
 
   if (!currentScene || !activeShot) return null;
 
-  const selectedLayer = selection.type === "layer"
-    ? activeShot.layers.find((layer) => layer.id === selection.id)
+  const selectedObject = selection.object;
+  const selectedLayer = selectedObject.domain === "composition" && selectedObject.kind === "layer"
+    ? activeShot.layers.find((layer) => layer.id === selectedObject.id)
     : undefined;
-  const selectedBeat = selection.type === "beat"
-    ? activeShot.beats.find((beat) => beat.id === selection.id)
+  const selectedCue = selectedObject.domain === "composition" && selectedObject.kind === "cue"
+    ? activeShot.cues.find((cue) => cue.id === selectedObject.id)
     : undefined;
-  const selectedKeyframe = selection.type === "keyframe"
-    ? getAnimationTrack(activeShot, selection.target).find((keyframe) => keyframe.id === selection.id)
+  const selectedKeyframe = selectedObject.domain === "composition" && selectedObject.kind === "keyframe"
+    ? getAnimationTrack(activeShot, selectedObject.target).find((keyframe) => keyframe.id === selectedObject.id)
     : undefined;
+  const selectedNarrativeUnit = selectedObject.domain === "narrative"
+    ? narrativeUnits.find((unit) => unit.id === selectedObject.id)
+    : undefined;
+  const selectedNarrativeItem = selectedObject.domain === "narrative"
+    ? findNarrativeItem(story, selectedObject.kind, selectedObject.id)
+    : undefined;
+  const selectedMotif = selectedObject.domain === "editorial" && selectedObject.kind === "motif"
+    ? story.motifs?.find((motif) => motif.id === selectedObject.id)
+    : undefined;
+  const selectedCreativeInterval = selectedObject.domain === "composition" && selectedObject.kind === "creative-interval"
+    ? activeShot.creativeIntervals?.find((interval) => interval.id === selectedObject.id)
+    : undefined;
+  const selectedNarrativeSpan = narrativeSelectionSpan(narrativePath, selectedObject);
+  const selectedCompositionInterval = selectedObject.domain === "composition" && selectedObject.kind !== "scene"
+    ? compositionPath.intervals.find((interval) => interval.id === (
+      selectedObject.kind === "shot" ? selectedObject.id : selection.compositionContext.shotId
+    ))
+    : undefined;
+  const selectedPathSpan = selectedObject.domain === "narrative"
+    ? selectedNarrativeSpan
+    : selectedObject.domain === "composition" && selectedObject.kind === "cue" && selectedCompositionInterval && selectedCue
+      ? projectLocalPathSpan(selectedCompositionInterval, selectedCue.start, selectedCue.duration)
+      : selectedObject.domain === "composition" && selectedObject.kind === "keyframe" && selectedCompositionInterval && selectedKeyframe
+        ? projectLocalPathSpan(selectedCompositionInterval, selectedKeyframe.progress, 0)
+      : selectedObject.domain === "composition" && selectedObject.kind === "creative-interval" && selectedCompositionInterval && selectedCreativeInterval
+        ? projectLocalPathSpan(selectedCompositionInterval, selectedCreativeInterval.start, selectedCreativeInterval.end - selectedCreativeInterval.start)
+    : selectedObject.kind === "scene"
+      ? { start: 0, end: 1 }
+      : selectedCompositionInterval
+        ? { start: selectedCompositionInterval.start, end: selectedCompositionInterval.end }
+        : undefined;
   const activeAnimationTarget = animationTarget.type === "camera" || activeShot.layers.some((layer) => layer.id === animationTarget.layerId)
     ? animationTarget
     : defaultAnimationTarget(activeShot);
-  const selectedLayerForCanvas = selectedLayer?.id ?? (
-    selection.type === "keyframe" && selection.target.type === "layer" ? selection.target.layerId : undefined
-  );
   let selectedKeyframeTargetLabel = "";
-  if (selection.type === "keyframe") {
-    const target = selection.target;
+  if (selectedObject.domain === "composition" && selectedObject.kind === "keyframe") {
+    const target = selectedObject.target;
     if (target.type === "camera") selectedKeyframeTargetLabel = "Camera";
     else selectedKeyframeTargetLabel = activeShot.layers.find((layer) => layer.id === target.layerId)?.name ?? "Layer";
   }
@@ -137,31 +204,142 @@ export function StudioApp() {
   function updateActiveShot(update: (shot: Shot) => Shot) {
     commitStory((currentStory) => ({
       ...currentStory,
-      chapters: currentStory.chapters.map((chapter) => ({
+      composition: { ...currentStory.composition, chapters: currentStory.composition.chapters.map((chapter) => ({
         ...chapter,
         scenes: chapter.scenes.map((scene) => ({
           ...scene,
           shots: scene.shots.map((shot) => shot.id === activeShot.id ? update(shot) : shot),
         })),
-      })),
+      })) },
     }));
+  }
+
+  function updateNarrative(kind: NarrativeKind, id: string, update: Partial<NarrativeItem>) {
+    commitStory((current) => {
+      if (kind === "movement") return updateMovement(current, id, update as Partial<import("./types/story").Movement>);
+      if (kind === "passage") return updatePassage(current, id, update as Partial<Passage>);
+      if (kind === "phrase") return updatePhrase(current, id, update as Partial<Phrase>);
+      if (kind === "pause") return updatePause(current, id, update as Partial<PauseInterval>);
+      return updateBeat(current, id, update as Partial<Beat>);
+    });
+  }
+
+  function addNarrativeMovement() {
+    const movement = { id: crypto.randomUUID(), title: "New Movement", passages: [] };
+    commitStory((current) => addMovement(current, movement));
+    setSelection({ domain: "narrative", kind: "movement", id: movement.id });
+  }
+
+  function addNarrativeChild(unit: NarrativeUnitView) {
+    if (unit.kind === "movement") {
+      const passage: Passage = { id: crypto.randomUUID(), title: "New Passage", phrases: [] };
+      commitStory((current) => addPassage(current, unit.id, passage));
+      setSelection({ domain: "narrative", kind: "passage", id: passage.id });
+    } else if (unit.kind === "passage") {
+      const phrase: Phrase = { id: crypto.randomUUID(), title: "New Phrase", beats: [] };
+      commitStory((current) => addPhrase(current, unit.id, phrase));
+      setSelection({ domain: "narrative", kind: "phrase", id: phrase.id });
+    } else if (unit.kind === "phrase") {
+      const beat: Beat = { id: crypto.randomUUID(), title: "New Beat" };
+      commitStory((current) => addBeat(current, unit.id, beat));
+      setSelection({ domain: "narrative", kind: "beat", id: beat.id });
+    }
+  }
+
+  function addNarrativePause(unit: NarrativeUnitView) {
+    if (unit.kind !== "passage") return;
+    const pause: PauseInterval = { id: crypto.randomUUID() };
+    commitStory((current) => addPause(current, unit.id, pause));
+    setSelection({ domain: "narrative", kind: "pause", id: pause.id });
+  }
+
+  function removeNarrativeUnit(unit: NarrativeUnitView) {
+    commitStory((current) => {
+      if (unit.kind === "movement") return removeMovement(current, unit.id);
+      if (unit.kind === "passage") return removePassage(current, unit.id);
+      if (unit.kind === "phrase") return removePhrase(current, unit.id);
+      if (unit.kind === "pause") return removePause(current, unit.id);
+      return removeBeat(current, unit.id);
+    });
+    const parentSelection = unit.kind === "beat" && unit.phraseId
+      ? { domain: "narrative" as const, kind: "phrase" as const, id: unit.phraseId }
+      : unit.kind === "pause" && unit.passageId
+        ? { domain: "narrative" as const, kind: "passage" as const, id: unit.passageId }
+      : unit.kind === "phrase" && unit.passageId
+        ? { domain: "narrative" as const, kind: "passage" as const, id: unit.passageId }
+        : unit.kind === "passage"
+          ? { domain: "narrative" as const, kind: "movement" as const, id: unit.movementId }
+          : undefined;
+    const nextStory = unit.kind === "movement"
+      ? removeMovement(story, unit.id)
+      : unit.kind === "passage"
+        ? removePassage(story, unit.id)
+        : unit.kind === "phrase"
+          ? removePhrase(story, unit.id)
+          : unit.kind === "pause"
+            ? removePause(story, unit.id)
+            : removeBeat(story, unit.id);
+    if (parentSelection && findNarrativeItem(nextStory, parentSelection.kind, parentSelection.id)) {
+      setSelection(parentSelection);
+    } else {
+      const firstNarrativeUnit = listNarrativeUnits(nextStory)[0];
+      setSelection(firstNarrativeUnit
+        ? { domain: "narrative", kind: firstNarrativeUnit.kind, id: firstNarrativeUnit.id }
+        : defaultSelection(activeShot));
+    }
+  }
+
+  function moveNarrative(unit: NarrativeUnitView, direction: -1 | 1) {
+    commitStory((current) => moveNarrativeItem(current, unit.kind, unit.id, direction));
+  }
+
+  function createMotif() {
+    const motif: Motif = { id: crypto.randomUUID(), name: "New Motif", occurrenceIds: [] };
+    commitStory((current) => addMotif(current, motif));
+    setSelection({ domain: "editorial", kind: "motif", id: motif.id });
+  }
+
+  function updateAuthoredMotif(id: string, update: Partial<Motif>) {
+    commitStory((current) => updateMotif(current, id, update));
+  }
+
+  function removeAuthoredMotif(id: string) {
+    commitStory((current) => removeMotif(current, id));
+    setSelection(defaultSelection(activeShot));
+  }
+
+  function addIntentionalInterval(kind: PresentationIntervalCue["kind"]) {
+    const start = Math.min(playhead, 0.74);
+    const interval: PresentationIntervalCue = {
+      id: crypto.randomUUID(),
+      kind,
+      start,
+      end: Math.min(1, start + 0.16),
+    };
+    commitStory((current) => addCreativeInterval(current, activeShot.id, interval));
+    setSelection({ domain: "composition", kind: "creative-interval", id: interval.id });
+  }
+
+  function editIntentionalInterval(id: string, update: PresentationIntervalCueUpdate) {
+    commitStory((current) => updateCreativeInterval(current, activeShot.id, id, update));
+  }
+
+  function deleteIntentionalInterval() {
+    if (!selectedCreativeInterval) return;
+    commitStory((current) => removeCreativeInterval(current, activeShot.id, selectedCreativeInterval.id));
+    setSelection(defaultSelection(activeShot));
   }
 
   function updateLayer(id: string, update: VisualLayerUpdate) {
-    updateActiveShot((shot) => ({
-      ...shot,
-      layers: shot.layers.map((layer) => layer.id === id
-        ? { ...layer, ...update, transform: { ...layer.transform, ...update.transform } } as VisualLayer
-        : layer),
-    }));
+    updateActiveShot((shot) => updateShotLayer(shot, id, update));
   }
 
-  function updateBeat(id: string, update: Partial<StoryBeat>) {
+  function updateCue(id: string, update: Partial<CompositionCue>) {
     updateActiveShot((shot) => ({
       ...shot,
-      beats: shot.beats.map((beat) => {
-        if (beat.id !== id) return beat;
-        const next = { ...beat, ...update };
+      cues: shot.cues.map((cue) => {
+        if (cue.id !== id) return cue;
+        const next = { ...cue, ...update };
         next.start = Math.max(0, Math.min(1, next.start));
         next.duration = Math.max(Number.EPSILON, Math.min(1 - next.start, next.duration));
         return next;
@@ -172,7 +350,7 @@ export function StudioApp() {
   function addKeyframe(target: AnimationTarget) {
     const existing = getAnimationTrack(activeShot, target).find((keyframe) => Math.abs(keyframe.progress - playhead) < 1e-9);
     if (existing) {
-      setSelection({ type: "keyframe", target, id: existing.id });
+      setSelection({ domain: "composition", kind: "keyframe", target, id: existing.id });
       setFeedback(`Selected the existing keyframe at ${Math.round(existing.progress * 100)}%.`);
       return;
     }
@@ -189,7 +367,7 @@ export function StudioApp() {
         ...shot,
         animation: { ...shot.animation, camera: [...shot.animation.camera, keyframe].sort((left, right) => left.progress - right.progress) },
       }));
-      setSelection({ type: "keyframe", target, id: keyframe.id });
+      setSelection({ domain: "composition", kind: "keyframe", target, id: keyframe.id });
       setAnimationTarget(target);
       setFeedback("");
       return;
@@ -217,7 +395,7 @@ export function StudioApp() {
         },
       };
     });
-    setSelection({ type: "keyframe", target, id: keyframe.id });
+    setSelection({ domain: "composition", kind: "keyframe", target, id: keyframe.id });
     setAnimationTarget(target);
     setFeedback("");
   }
@@ -237,18 +415,9 @@ export function StudioApp() {
     }
 
     if (target.type === "camera") {
-      const frames = activeShot.animation.camera
-        .map((frame) => frame.id === id ? mergeKeyframe(frame, update, progress) : frame)
-        .sort((left, right) => left.progress - right.progress);
-      updateActiveShot((shot) => ({ ...shot, animation: { ...shot.animation, camera: frames } }));
+      updateActiveShot((shot) => updateShotKeyframe(shot, target, id, { ...update, progress }));
     } else {
-      const frames = (activeShot.animation.layers[target.layerId] ?? [])
-        .map((frame) => frame.id === id ? mergeKeyframe(frame, update, progress) : frame)
-        .sort((left, right) => left.progress - right.progress);
-      updateActiveShot((shot) => ({
-        ...shot,
-        animation: { ...shot.animation, layers: { ...shot.animation.layers, [target.layerId]: frames } },
-      }));
+      updateActiveShot((shot) => updateShotKeyframe(shot, target, id, { ...update, progress }));
     }
     setFeedback("");
   }
@@ -268,15 +437,17 @@ export function StudioApp() {
         return { ...shot, animation: { ...shot.animation, layers } };
       });
     }
-    setSelection(target.type === "layer" ? { type: "layer", id: target.layerId } : defaultSelection(activeShot));
+    setSelection(target.type === "layer"
+      ? { domain: "composition", kind: "layer", id: target.layerId }
+      : defaultSelection(activeShot));
     setFeedback("");
   }
 
   function selectAnimationTarget(target: AnimationTarget) {
     setAnimationTarget(target);
     const keyframe = getAnimationTrack(activeShot, target)[0];
-    if (keyframe) setSelection({ type: "keyframe", target, id: keyframe.id });
-    else if (target.type === "layer") setSelection({ type: "layer", id: target.layerId });
+    if (keyframe) setSelection({ domain: "composition", kind: "keyframe", target, id: keyframe.id });
+    else if (target.type === "layer") setSelection({ domain: "composition", kind: "layer", id: target.layerId });
     else setSelection(defaultSelection(activeShot));
   }
 
@@ -284,16 +455,27 @@ export function StudioApp() {
     const nextShot = createShot(currentScene.shots.length + 1);
     commitStory((currentStory) => ({
       ...currentStory,
-      chapters: currentStory.chapters.map((chapter) => ({
+      composition: { ...currentStory.composition, chapters: currentStory.composition.chapters.map((chapter) => ({
         ...chapter,
         scenes: chapter.scenes.map((scene) => scene.id === currentScene.id
           ? { ...scene, shots: [...scene.shots, nextShot] }
           : scene),
-      })),
+      })) },
     }));
-    setSelectedShotId(nextShot.id);
-    setSelection(defaultSelection(nextShot));
+    setSelection(defaultSelection(nextShot), { sceneId: currentScene.id, shotId: nextShot.id });
     setAnimationTarget(defaultAnimationTarget(nextShot));
+  }
+
+  function moveShot(id: string, direction: -1 | 1) {
+    commitStory((currentStory) => ({
+      ...currentStory,
+      composition: { ...currentStory.composition, chapters: currentStory.composition.chapters.map((chapter) => ({
+        ...chapter,
+        scenes: chapter.scenes.map((scene) => scene.id === currentScene.id
+          ? reorderSceneShot(scene, id, direction)
+          : scene),
+      })) },
+    }));
   }
 
   function addScene() {
@@ -304,13 +486,11 @@ export function StudioApp() {
     };
     commitStory((currentStory) => ({
       ...currentStory,
-      chapters: currentStory.chapters.map((chapter) => chapter.id === currentChapter.id
+      composition: { ...currentStory.composition, chapters: currentStory.composition.chapters.map((chapter) => chapter.id === currentChapter.id
         ? { ...chapter, scenes: [...chapter.scenes, scene] }
-        : chapter),
+        : chapter) },
     }));
-    setSelectedSceneId(scene.id);
-    setSelectedShotId(scene.shots[0].id);
-    setSelection(defaultSelection(scene.shots[0]));
+    setSelection(defaultSelection(scene.shots[0]), { sceneId: scene.id, shotId: scene.shots[0].id });
     setAnimationTarget(defaultAnimationTarget(scene.shots[0]));
   }
 
@@ -321,21 +501,17 @@ export function StudioApp() {
     const nextShot = nextScene.shots[0];
     commitStory((currentStory) => ({
       ...currentStory,
-      chapters: currentStory.chapters.map((chapter) => chapter.id === currentChapter.id
+      composition: { ...currentStory.composition, chapters: currentStory.composition.chapters.map((chapter) => chapter.id === currentChapter.id
         ? { ...chapter, scenes: remainingScenes }
-        : chapter),
+        : chapter) },
     }));
-    setSelectedSceneId(nextScene.id);
-    setSelectedShotId(nextShot.id);
-    setSelection(defaultSelection(nextShot));
+    setSelection(defaultSelection(nextShot), { sceneId: nextScene.id, shotId: nextShot.id });
     setAnimationTarget(defaultAnimationTarget(nextShot));
   }
 
   function selectScene(scene: Scene) {
     const nextShot = scene.shots[0];
-    setSelectedSceneId(scene.id);
-    setSelectedShotId(nextShot.id);
-    setSelection(defaultSelection(nextShot));
+    setSelection({ domain: "composition", kind: "scene", id: scene.id }, { sceneId: scene.id, shotId: nextShot.id });
     setAnimationTarget(defaultAnimationTarget(nextShot));
   }
 
@@ -344,41 +520,40 @@ export function StudioApp() {
     const remainingShots = currentScene.shots.filter((shot) => shot.id !== activeShot.id);
     commitStory((currentStory) => ({
       ...currentStory,
-      chapters: currentStory.chapters.map((chapter) => ({
+      composition: { ...currentStory.composition, chapters: currentStory.composition.chapters.map((chapter) => ({
         ...chapter,
         scenes: chapter.scenes.map((scene) => scene.id === currentScene.id
           ? { ...scene, shots: remainingShots }
           : scene),
-      })),
+      })) },
     }));
-    setSelectedShotId(remainingShots[0].id);
-    setSelection(defaultSelection(remainingShots[0]));
+    setSelection(defaultSelection(remainingShots[0]), { sceneId: currentScene.id, shotId: remainingShots[0].id });
     setAnimationTarget(defaultAnimationTarget(remainingShots[0]));
   }
 
-  function addBeat(track: BeatTrack) {
-    const labels: Record<BeatTrack, string> = {
+  function addCue(track: CompositionCueTrack) {
+    const labels: Record<CompositionCueTrack, string> = {
       camera: "Camera move",
       character: "Character beat",
       dialogue: "New dialogue",
       sound: "Sound cue",
       scroll: "Scroll hold",
     };
-    const beat: StoryBeat = {
+    const cue: CompositionCue = {
       id: crypto.randomUUID(),
       track,
       label: labels[track],
       start: Math.min(playhead, 0.82),
       duration: 0.16,
     };
-    updateActiveShot((shot) => ({ ...shot, beats: [...shot.beats, beat] }));
-    setSelection({ type: "beat", id: beat.id });
+    updateActiveShot((shot) => ({ ...shot, cues: [...shot.cues, cue] }));
+    setSelection({ domain: "composition", kind: "cue", id: cue.id });
   }
 
-  function removeSelectedBeat() {
-    if (!selectedBeat) return;
-    updateActiveShot((shot) => ({ ...shot, beats: shot.beats.filter((beat) => beat.id !== selectedBeat.id) }));
-    setSelection({ type: "layer", id: activeShot.layers[0]?.id ?? "" });
+  function removeSelectedCue() {
+    if (!selectedCue) return;
+    updateActiveShot((shot) => ({ ...shot, cues: shot.cues.filter((cue) => cue.id !== selectedCue.id) }));
+    setSelection(defaultSelection(activeShot));
   }
 
   function selectAsset(assetId: string) {
@@ -386,8 +561,57 @@ export function StudioApp() {
       ("assetId" in item && item.assetId === assetId) || item.id === assetId || (assetId === "character" && item.kind === "character"),
     );
     if (layer) {
-      setSelection({ type: "layer", id: layer.id });
+      setSelection({ domain: "composition", kind: "layer", id: layer.id });
       setAnimationTarget({ type: "layer", layerId: layer.id });
+    }
+  }
+
+  function selectNarrativeUnit(unit: NarrativeUnitView) {
+    setSelection({ domain: "narrative", kind: unit.kind, id: unit.id });
+  }
+
+  function selectDiagnosticObject(objectId?: string) {
+    if (!objectId) return;
+    const narrativeUnit = narrativeUnits.find((unit) => unit.id === objectId);
+    if (narrativeUnit) {
+      selectNarrativeUnit(narrativeUnit);
+      return;
+    }
+    const motif = story.motifs?.find((item) => item.id === objectId);
+    if (motif) {
+      setSelection({ domain: "editorial", kind: "motif", id: motif.id });
+      return;
+    }
+
+    const firstChapter = story.composition.chapters[0];
+    for (const scene of firstChapter?.scenes ?? []) {
+      const sceneShot = scene.shots[0];
+      if (scene.id === objectId && sceneShot) {
+        setSelection({ domain: "composition", kind: "scene", id: scene.id }, { sceneId: scene.id, shotId: sceneShot.id });
+        return;
+      }
+      for (const shot of scene.shots) {
+        const context = { sceneId: scene.id, shotId: shot.id };
+        if (shot.id === objectId) {
+          setSelection({ domain: "composition", kind: "shot", id: shot.id }, context);
+          return;
+        }
+        const layer = shot.layers.find((item) => item.id === objectId);
+        if (layer) {
+          setSelection({ domain: "composition", kind: "layer", id: layer.id }, context);
+          return;
+        }
+        const cue = shot.cues.find((item) => item.id === objectId);
+        if (cue) {
+          setSelection({ domain: "composition", kind: "cue", id: cue.id }, context);
+          return;
+        }
+        const interval = shot.creativeIntervals?.find((item) => item.id === objectId);
+        if (interval) {
+          setSelection({ domain: "composition", kind: "creative-interval", id: interval.id }, context);
+          return;
+        }
+      }
     }
   }
 
@@ -409,11 +633,10 @@ export function StudioApp() {
       const imported = parseImportedStory(await file.text());
       const importedShot = firstShot(imported);
       if (!importedShot) throw new Error("The project does not contain a shot the Studio can open.");
+      const importedScene = imported.composition.chapters[0].scenes[0];
       setStory(imported);
       setCanAutoSave(true);
-      setSelectedSceneId(imported.chapters[0].scenes[0].id);
-      setSelectedShotId(importedShot.id);
-      setSelection(defaultSelection(importedShot));
+      setSelection(defaultSelection(importedShot), { sceneId: importedScene.id, shotId: importedShot.id });
       setAnimationTarget(defaultAnimationTarget(importedShot));
       setPlayhead(0.32);
       setFeedback(`Imported ${imported.title}.`);
@@ -427,11 +650,10 @@ export function StudioApp() {
     const resetStory = createSampleStory();
     const resetShot = firstShot(resetStory);
     if (!resetShot) return;
+    const resetScene = resetStory.composition.chapters[0].scenes[0];
     setStory(resetStory);
     setCanAutoSave(true);
-    setSelectedSceneId(resetStory.chapters[0].scenes[0].id);
-    setSelectedShotId(resetShot.id);
-    setSelection(defaultSelection(resetShot));
+    setSelection(defaultSelection(resetShot), { sceneId: resetScene.id, shotId: resetShot.id });
     setAnimationTarget(defaultAnimationTarget(resetShot));
     setPlayhead(0.32);
     setFeedback("Sample project restored.");
@@ -442,10 +664,13 @@ export function StudioApp() {
       <Toolbar
         projectName={story.title}
         previewing={previewing}
+        validationOpen={validationOpen}
+        validationCount={validationReport.structural.length + validationReport.playback.length + validationReport.editorial.length}
         saveStatus={saveStatus}
         feedback={feedback}
         onProjectNameChange={(title) => commitStory((current) => ({ ...current, title }))}
         onPreviewToggle={() => setPreviewing((current) => !current)}
+        onValidationToggle={() => setValidationOpen((current) => !current)}
         onExport={exportProject}
         onImportFile={importProject}
         onReset={resetProject}
@@ -457,15 +682,25 @@ export function StudioApp() {
             activeShot={activeShot}
             selectedLayerId={selectedLayer?.id}
             saveStatus={saveStatus}
-            selectedSceneId={currentScene.id}
+            selection={selectionProjection.navigator}
+            narrativeUnits={narrativeUnits}
+            motifs={story.motifs ?? []}
             onSceneSelect={selectScene}
             onAddScene={addScene}
             onRemoveScene={removeSelectedScene}
             onShotSelect={(shot) => {
-              setSelectedShotId(shot.id);
-              setSelection(defaultSelection(shot));
+              setSelection({ domain: "composition", kind: "shot", id: shot.id }, { sceneId: currentScene.id, shotId: shot.id });
               setAnimationTarget(defaultAnimationTarget(shot));
             }}
+            onShotMove={moveShot}
+            onNarrativeSelect={selectNarrativeUnit}
+            onNarrativeAddMovement={addNarrativeMovement}
+            onNarrativeAddChild={addNarrativeChild}
+            onNarrativeAddPause={addNarrativePause}
+            onNarrativeRemove={removeNarrativeUnit}
+            onNarrativeMove={moveNarrative}
+            onMotifSelect={(motif) => setSelection({ domain: "editorial", kind: "motif", id: motif.id })}
+            onMotifAdd={createMotif}
             onAddShot={addShot}
             onRemoveShot={removeSelectedShot}
             onAssetSelect={selectAsset}
@@ -482,47 +717,77 @@ export function StudioApp() {
           <ShotCanvas
             shot={activeShot}
             playhead={playhead}
-            selectedLayerId={selectedLayerForCanvas}
+            selection={selectionProjection.stage}
+            selectedCue={selectedCue}
+            narrativeSelectionLabel={selectedNarrativeUnit?.title}
             onLayerSelect={(id) => {
-              setSelection({ type: "layer", id });
+              setSelection({ domain: "composition", kind: "layer", id });
               setAnimationTarget({ type: "layer", layerId: id });
             }}
           />
         </main>
-        {!previewing && (selection.type === "keyframe" && selectedKeyframe ? (
+        {!previewing && (selectedObject.domain === "composition" && selectedObject.kind === "keyframe" && selectedKeyframe ? (
             <KeyframeInspector
               keyframe={selectedKeyframe}
-              target={selection.target}
+              target={selectedObject.target}
               targetLabel={selectedKeyframeTargetLabel}
-              onUpdate={(update) => updateKeyframe(selection.target, selection.id, update)}
-              onRemove={() => removeKeyframe(selection.target, selection.id)}
+              onUpdate={(update) => updateKeyframe(selectedObject.target, selectedObject.id, update)}
+              onRemove={() => removeKeyframe(selectedObject.target, selectedObject.id)}
             />
           ) : (
             <Inspector
+              selection={selectionProjection.inspector}
+              narrativeItem={selectedNarrativeItem}
+              motif={selectedMotif}
+              story={story}
+              creativeInterval={selectedCreativeInterval}
+              motifTargets={motifTargets}
+              pathSpan={selectedPathSpan}
+              selectedScene={currentScene}
+              selectedShot={activeShot}
+              onNarrativeUpdate={updateNarrative}
+              onMotifUpdate={updateAuthoredMotif}
+              onMotifRemove={removeAuthoredMotif}
+              onCreativeIntervalUpdate={editIntentionalInterval}
+              onCreativeIntervalRemove={deleteIntentionalInterval}
               layer={selectedLayer}
-              beat={selectedBeat}
+              cue={selectedCue}
               onLayerUpdate={(update) => selectedLayer && updateLayer(selectedLayer.id, update)}
-              onBeatUpdate={(update) => selectedBeat && updateBeat(selectedBeat.id, update)}
-              onBeatRemove={removeSelectedBeat}
+              onCueUpdate={(update) => selectedCue && updateCue(selectedCue.id, update)}
+              onCueRemove={removeSelectedCue}
             />
           ))}
       </div>
       {!previewing && (
         <Timeline
           shot={activeShot}
+          compositionPath={compositionPath}
+          narrativePath={narrativePath}
+          selection={selectionProjection.path}
+          selectedPathSpan={selectedPathSpan}
+          onPathShotSelect={(shot) => setSelection(
+            { domain: "composition", kind: "shot", id: shot.id },
+            { sceneId: currentScene.id, shotId: shot.id },
+          )}
+          onNarrativeSelect={selectNarrativeUnit}
           playhead={playhead}
           onPlayheadChange={setPlayhead}
-          onBeatSelect={(id) => setSelection({ type: "beat", id })}
-          onBeatAdd={addBeat}
+          onCueSelect={(id) => setSelection({ domain: "composition", kind: "cue", id })}
+          onCueAdd={addCue}
+          onCreativeIntervalAdd={addIntentionalInterval}
+          onCreativeIntervalSelect={(id) => setSelection({ domain: "composition", kind: "creative-interval", id })}
           animationTarget={activeAnimationTarget}
-          selectedKeyframe={selection.type === "keyframe" ? { id: selection.id, target: selection.target } : undefined}
+          selectedKeyframe={selectedObject.domain === "composition" && selectedObject.kind === "keyframe" ? { id: selectedObject.id, target: selectedObject.target } : undefined}
           onAnimationTargetChange={selectAnimationTarget}
           onKeyframeAdd={addKeyframe}
           onKeyframeSelect={(target, id) => {
             setAnimationTarget(target);
-            setSelection({ type: "keyframe", target, id });
+            setSelection({ domain: "composition", kind: "keyframe", target, id });
           }}
         />
+      )}
+      {!previewing && validationOpen && (
+        <ValidationPanel report={validationReport} onClose={() => setValidationOpen(false)} onSelectObject={selectDiagnosticObject} />
       )}
     </div>
   );

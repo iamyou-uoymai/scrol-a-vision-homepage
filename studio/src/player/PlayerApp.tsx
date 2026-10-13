@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent, CSSProperties } from "react";
 import cityBackdrop from "../../../assets/player-city-demo.jpg";
 import travelerArtwork from "../../../assets/traveler.svg";
@@ -7,9 +7,11 @@ import { sampleStory } from "../data/sampleStory";
 import type { LayerTransform, Shot, Story, VisualLayer } from "../types/story";
 import { DEFAULT_CAMERA_TRANSFORM, evaluateAnimationTrack } from "../data/animation";
 import {
+  compileShotPath,
   mapScrollToProgress,
-  resolveShotAtProgress,
-  visibilityThroughBeat,
+  resolveShotAtCompiledPath,
+  scrollPositionForProgress,
+  visibilityThroughCue,
 } from "./progress";
 
 function loadPlayerStory(): Story {
@@ -58,25 +60,74 @@ export function PlayerApp() {
   );
   const runwayRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const progressRef = useRef(0);
 
   useEffect(() => {
     const previousRestoration = window.history.scrollRestoration;
     window.history.scrollRestoration = "manual";
     window.scrollTo(0, 0);
 
-    const updateProgress = () => {
+    const readProgress = () => {
       const runway = runwayRef.current;
       if (!runway) return;
       const runwayStart = runway.getBoundingClientRect().top + window.scrollY;
-      setProgress(mapScrollToProgress(window.scrollY, runwayStart, runway.offsetHeight, window.innerHeight));
+      const nextProgress = mapScrollToProgress(window.scrollY, runwayStart, runway.offsetHeight, window.innerHeight);
+      progressRef.current = nextProgress;
+      setProgress(nextProgress);
     };
 
-    updateProgress();
+    let resizeFrame = 0;
+    const updateProgress = () => {
+      if (resizeFrame) return;
+      readProgress();
+    };
+    const cancelResizeForUserInput = () => {
+      if (!resizeFrame) return;
+      window.cancelAnimationFrame(resizeFrame);
+      resizeFrame = 0;
+      readProgress();
+    };
+    const cancelResizeForScrollKey = (event: KeyboardEvent) => {
+      if (["ArrowDown", "ArrowUp", "PageDown", "PageUp", "Home", "End", " "].includes(event.key)) {
+        cancelResizeForUserInput();
+      }
+    };
+    const preserveProgressOnResize = () => {
+      const preservedProgress = progressRef.current;
+      if (resizeFrame) window.cancelAnimationFrame(resizeFrame);
+      resizeFrame = window.requestAnimationFrame(() => {
+        resizeFrame = 0;
+        const runway = runwayRef.current;
+        if (!runway) return;
+        const runwayStart = runway.getBoundingClientRect().top + window.scrollY;
+        const targetScroll = scrollPositionForProgress(
+          preservedProgress,
+          runwayStart,
+          runway.offsetHeight,
+          window.innerHeight,
+        );
+        window.scrollTo(0, targetScroll);
+        const nextProgress = mapScrollToProgress(targetScroll, runwayStart, runway.offsetHeight, window.innerHeight);
+        progressRef.current = nextProgress;
+        setProgress(nextProgress);
+      });
+    };
+
+    readProgress();
     window.addEventListener("scroll", updateProgress, { passive: true });
-    window.addEventListener("resize", updateProgress);
+    window.addEventListener("resize", preserveProgressOnResize);
+    window.addEventListener("wheel", cancelResizeForUserInput, { passive: true });
+    window.addEventListener("touchstart", cancelResizeForUserInput, { passive: true });
+    window.addEventListener("pointerdown", cancelResizeForUserInput, { passive: true });
+    window.addEventListener("keydown", cancelResizeForScrollKey);
     return () => {
       window.removeEventListener("scroll", updateProgress);
-      window.removeEventListener("resize", updateProgress);
+      window.removeEventListener("resize", preserveProgressOnResize);
+      window.removeEventListener("wheel", cancelResizeForUserInput);
+      window.removeEventListener("touchstart", cancelResizeForUserInput);
+      window.removeEventListener("pointerdown", cancelResizeForUserInput);
+      window.removeEventListener("keydown", cancelResizeForScrollKey);
+      if (resizeFrame) window.cancelAnimationFrame(resizeFrame);
       window.history.scrollRestoration = previousRestoration;
     };
   }, []);
@@ -88,9 +139,10 @@ export function PlayerApp() {
     return () => media.removeEventListener("change", updatePreference);
   }, []);
 
-  const chapter = story.chapters[0];
+  const chapter = story.composition.chapters[0];
   const scene = chapter?.scenes[0];
-  const playback = resolveShotAtProgress(scene?.shots, progress);
+  const shotPath = useMemo(() => compileShotPath(scene?.shots), [scene?.shots]);
+  const playback = resolveShotAtCompiledPath(shotPath, progress);
 
   async function handleStoryFile(event: ChangeEvent<HTMLInputElement>) {
     const input = event.currentTarget;
@@ -121,7 +173,7 @@ export function PlayerApp() {
   const backgroundLayers = shot.layers.filter((layer) => layer.kind === "background");
   const characterLayers = shot.layers.filter((layer) => layer.kind === "character");
   const dialogueLayers = shot.layers.filter((layer) => layer.kind === "dialogue");
-  const dialogueBeats = shot.beats.filter((beat) => beat.track === "dialogue");
+  const dialogueCues = shot.cues.filter((cue) => cue.track === "dialogue");
   const cameraTrack = shot.animation.camera;
   const camera = prefersReducedMotion
     ? cameraTrack[0]?.transform ?? DEFAULT_CAMERA_TRANSFORM
@@ -161,29 +213,29 @@ export function PlayerApp() {
                 </div>
               );
             })}
-            {dialogueBeats.map((beat, index) => {
+            {dialogueCues.map((cue, index) => {
               const layer = dialogueLayers[index];
               const fallbackTransform = { x: 50, y: 76, scale: 100, rotation: 0, opacity: 100 };
               const baseTransform = layer
                 ? layerTransformAtProgress(shot, layer, localProgress, prefersReducedMotion)
                 : fallbackTransform;
-              const active = localProgress >= beat.start && localProgress <= beat.start + beat.duration;
+              const active = localProgress >= cue.start && localProgress <= cue.start + cue.duration;
               const opacity = prefersReducedMotion
                 ? Number(active)
-                : visibilityThroughBeat(localProgress, beat);
+                : visibilityThroughCue(localProgress, cue);
               const style: CSSProperties = {
                 ...getLayerStyle("dialogue", baseTransform),
                 opacity: (baseTransform.opacity / 100) * opacity,
                 visibility: active ? "visible" : "hidden",
               };
               return (
-                <div className="player-dialogue" key={beat.id} style={style} aria-hidden={!active}>
+                <div className="player-dialogue" key={cue.id} style={style} aria-hidden={!active}>
                   {layer?.speaker && <span className="player-dialogue-speaker">{layer.speaker}</span>}
-                  <p>{layer?.text ?? beat.label}</p>
+                  <p>{layer?.text ?? cue.label}</p>
                 </div>
               );
             })}
-            {dialogueBeats.length === 0 && dialogueLayers.map((layer) => (
+            {dialogueCues.length === 0 && dialogueLayers.map((layer) => (
               <div className="player-dialogue" key={layer.id} style={getLayerStyle(layer.kind, layerTransformAtProgress(shot, layer, progress, prefersReducedMotion))}>
                 {layer.speaker && <span className="player-dialogue-speaker">{layer.speaker}</span>}
                 <p>{layer.text}</p>

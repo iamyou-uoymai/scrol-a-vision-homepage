@@ -1,13 +1,16 @@
 import type { CSSProperties } from "react";
 import heroScene from "../../../assets/hero-scene.jpg";
 import travelerArtwork from "../../../assets/traveler.svg";
-import type { Shot, VisualLayer } from "../types/story";
+import type { CompositionCue, Shot, VisualLayer } from "../types/story";
 import { DEFAULT_CAMERA_TRANSFORM, evaluateAnimationTrack } from "../data/animation";
+import type { StudioSelectionProjection } from "../data/studioSelection";
 
 interface ShotCanvasProps {
   shot: Shot;
   playhead?: number;
-  selectedLayerId?: string;
+  selection: StudioSelectionProjection["stage"];
+  selectedCue?: CompositionCue;
+  narrativeSelectionLabel?: string;
   onLayerSelect: (id: string) => void;
 }
 
@@ -23,15 +26,24 @@ function layerStyle(layer: VisualLayer, transform: VisualLayer["transform"]): CS
   };
 }
 
-export function ShotCanvas({ shot, playhead = 0, selectedLayerId, onLayerSelect }: ShotCanvasProps) {
+export function ShotCanvas({ shot, playhead = 0, selection, selectedCue, narrativeSelectionLabel, onLayerSelect }: ShotCanvasProps) {
+  const selectedLayerId = selection.selectedLayerId;
   const camera = evaluateAnimationTrack(shot.animation.camera, playhead) ?? DEFAULT_CAMERA_TRANSFORM;
   const worldStyle: CSSProperties = {
     transform: `translate3d(${camera.x}%, ${camera.y}%, 0) rotate(${camera.rotation}deg) scale(${camera.scale / 100})`,
   };
 
   return (
-    <div className="canvas-surround">
+    <div className="canvas-surround" data-selected-object={`${selection.object.domain}-${selection.object.kind}`} data-selected-object-id={selection.object.id}>
       <div className="canvas-toolbar"><span>COMPOSITION</span><span>16:10 <i /> 100%</span></div>
+      {selection.narrativeSelection && (
+        <p className="canvas-selection-note" data-testid="stage-narrative-selection">
+          {`${selection.object.kind} selected: ${narrativeSelectionLabel ?? selection.object.id}. No composition link. Showing ${shot.title}.`}
+        </p>
+      )}
+      {selection.object.domain === "composition" && selection.object.kind === "cue" && selectedCue && (
+        <p className="canvas-selection-note" data-testid="stage-cue-selection">Cue selected: {selectedCue.label}</p>
+      )}
       <div className="composition-viewport">
         <div className="canvas-world" style={worldStyle}>
           <div className="scene-light" aria-hidden="true" />

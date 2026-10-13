@@ -3,16 +3,19 @@ import { useRef } from "react";
 interface ToolbarProps {
   projectName: string;
   previewing: boolean;
+  validationOpen: boolean;
+  validationCount: number;
   saveStatus: string;
   feedback: string;
   onProjectNameChange: (name: string) => void;
   onPreviewToggle: () => void;
+  onValidationToggle: () => void;
   onExport: () => void;
   onImportFile: (file: File) => void;
   onReset: () => void;
 }
 
-export function Toolbar({ projectName, previewing, saveStatus, feedback, onProjectNameChange, onPreviewToggle, onExport, onImportFile, onReset }: ToolbarProps) {
+export function Toolbar({ projectName, previewing, validationOpen, validationCount, saveStatus, feedback, onProjectNameChange, onPreviewToggle, onValidationToggle, onExport, onImportFile, onReset }: ToolbarProps) {
   const fileInput = useRef<HTMLInputElement>(null);
 
   return (
@@ -32,6 +35,9 @@ export function Toolbar({ projectName, previewing, saveStatus, feedback, onProje
         <button type="button" className="quiet-button" disabled title="Undo is not available in this prototype">Undo</button>
         <button type="button" className="quiet-button" disabled title="Redo is not available in this prototype">Redo</button>
         <span className="toolbar-divider" aria-hidden="true" />
+        <button type="button" className="quiet-button review-toggle" onClick={onValidationToggle} aria-expanded={validationOpen} aria-label={validationOpen ? "Close validation review" : `Open validation review, ${validationCount} findings`}>
+          {validationOpen ? "Close review" : `Review · ${validationCount}`}
+        </button>
         <span className="save-status" aria-live="polite" title={saveStatus}>{saveStatus}</span>
         <button type="button" className="quiet-button file-action" aria-label="Export JSON" onClick={onExport}><span className="full-action-label">Export JSON</span><span className="compact-action-label">Export</span></button>
         <button type="button" className="quiet-button file-action" aria-label="Import JSON" onClick={() => fileInput.current?.click()}><span className="full-action-label">Import JSON</span><span className="compact-action-label">Import</span></button>

@@ -1,6 +1,6 @@
 export type LayerKind = "background" | "character" | "dialogue";
 
-export type BeatTrack = "camera" | "character" | "dialogue" | "sound" | "scroll";
+export type CompositionCueTrack = "camera" | "character" | "dialogue" | "sound" | "scroll";
 export type NormalizedProgress = number;
 
 export interface LayerTransform {
@@ -71,35 +71,35 @@ export type VisualLayerUpdate = {
   transform?: Partial<LayerTransform>;
 };
 
-export interface StoryBeat {
+export interface CompositionCue {
   id: string;
-  track: BeatTrack;
+  track: CompositionCueTrack;
   label: string;
   start: NormalizedProgress;
   duration: NormalizedProgress;
 }
 
-export interface Shot {
+export interface LegacyShotV2 {
   id: string;
   title: string;
   layers: VisualLayer[];
-  beats: StoryBeat[];
+  beats: CompositionCue[];
   animation: ShotAnimation;
 }
 
-export interface Scene {
+export interface LegacySceneV2 {
   id: string;
   title: string;
-  shots: Shot[];
+  shots: LegacyShotV2[];
 }
 
-export interface Chapter {
+export interface LegacyChapterV2 {
   id: string;
   title: string;
-  scenes: Scene[];
+  scenes: LegacySceneV2[];
 }
 
-export interface Story {
+export interface StoryV2 {
   schemaVersion: 2;
   id: string;
   title: string;
@@ -107,14 +107,155 @@ export interface Story {
     createdAt: string;
     updatedAt: string;
   };
-  chapters: Chapter[];
+  chapters: LegacyChapterV2[];
 }
 
-export type LegacyShotV1 = Omit<Shot, "animation">;
-export type LegacySceneV1 = Omit<Scene, "shots"> & { shots: LegacyShotV1[] };
-export type LegacyChapterV1 = Omit<Chapter, "scenes"> & { scenes: LegacySceneV1[] };
+export type LegacyShotV1 = Omit<LegacyShotV2, "animation">;
+export type LegacySceneV1 = Omit<LegacySceneV2, "shots"> & { shots: LegacyShotV1[] };
+export type LegacyChapterV1 = Omit<LegacyChapterV2, "scenes"> & { scenes: LegacySceneV1[] };
 
-export interface StoryV1 extends Omit<Story, "schemaVersion" | "chapters"> {
+export interface StoryV1 extends Omit<StoryV2, "schemaVersion" | "chapters"> {
   schemaVersion: 1;
   chapters: LegacyChapterV1[];
 }
+
+export type PrimaryNarrativeFunction =
+  | "INTRODUCE"
+  | "CHANGE"
+  | "REVEAL"
+  | "EMPHASIZE"
+  | "RESOLVE"
+  | "INTERRUPT";
+
+export type DynamicShape = "FLAT" | "ASCENDING" | "DESCENDING" | "PEAK" | "VALLEY" | "OSCILLATING";
+
+export interface PassageDynamic {
+  shape: DynamicShape;
+  channel?: string;
+}
+
+export interface PauseInterval {
+  id: string;
+  afterBeatId?: string;
+  traversalWeight?: number;
+  intent?: string;
+}
+
+export interface SilenceCue {
+  id: string;
+  kind: "silence";
+  start: NormalizedProgress;
+  end: NormalizedProgress;
+  audioChannel?: string;
+  intent?: string;
+}
+
+export interface VoidCue {
+  id: string;
+  kind: "void";
+  start: NormalizedProgress;
+  end: NormalizedProgress;
+  intent?: string;
+}
+
+export type PresentationIntervalCue = SilenceCue | VoidCue;
+export interface PresentationIntervalCueUpdate {
+  kind?: PresentationIntervalCue["kind"];
+  start?: NormalizedProgress;
+  end?: NormalizedProgress;
+  audioChannel?: string;
+  intent?: string;
+}
+
+export interface Motif {
+  id: string;
+  name: string;
+  identity?: string;
+  significance?: string;
+  occurrenceIds: string[];
+}
+
+export interface Beat {
+  id: string;
+  title: string;
+  purpose?: string;
+  primaryFunction?: PrimaryNarrativeFunction;
+  traversalWeight?: number;
+}
+
+export interface Phrase {
+  id: string;
+  title: string;
+  narrativeIdea?: string;
+  beats: Beat[];
+}
+
+export interface PassageAnnotations {
+  entry?: string;
+  development?: string;
+  dominantBeatId?: string;
+  exit?: string;
+}
+
+export interface Passage {
+  id: string;
+  title: string;
+  dominantPurpose?: string;
+  annotations?: PassageAnnotations;
+  tempoLabel?: string;
+  dynamics?: PassageDynamic[];
+  pauses?: PauseInterval[];
+  phrases: Phrase[];
+}
+
+export interface Movement {
+  id: string;
+  title: string;
+  purpose?: string;
+  conditionNote?: string;
+  passages: Passage[];
+}
+
+export interface CompositionShot {
+  id: string;
+  title: string;
+  layers: VisualLayer[];
+  cues: CompositionCue[];
+  creativeIntervals?: PresentationIntervalCue[];
+  animation: ShotAnimation;
+}
+
+export interface CompositionScene {
+  id: string;
+  title: string;
+  shots: CompositionShot[];
+}
+
+export interface CompositionChapter {
+  id: string;
+  title: string;
+  scenes: CompositionScene[];
+}
+
+export interface StoryComposition {
+  chapters: CompositionChapter[];
+}
+
+export interface StoryV3 {
+  schemaVersion: 3;
+  grammarVersion: string | null;
+  id: string;
+  title: string;
+  metadata: {
+    createdAt: string;
+    updatedAt: string;
+  };
+  movements: Movement[];
+  motifs?: Motif[];
+  composition: StoryComposition;
+}
+
+export type Story = StoryV3;
+export type Shot = CompositionShot;
+export type Scene = CompositionScene;
+export type Chapter = CompositionChapter;
