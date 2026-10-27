@@ -1,4 +1,4 @@
-import type { AnimationKeyframe, AnimationTarget, CameraTransform, Keyframe, LayerTransform, Shot } from "../types/story";
+import type { AnimationKeyframe, AnimationTarget, CameraTransform, EasingMode, Keyframe, LayerTransform, Shot } from "../types/story";
 
 export type AnimationTransform = CameraTransform | LayerTransform;
 
@@ -19,8 +19,11 @@ export function clampProgress(progress: number): number {
   return Math.max(0, Math.min(1, progress));
 }
 
-function easeInOut(progress: number): number {
-  return progress * progress * (3 - 2 * progress);
+function applyEasing(progress: number, easing: EasingMode | undefined): number {
+  if (easing === "ease-in") return progress * progress;
+  if (easing === "ease-out") return 1 - (1 - progress) * (1 - progress);
+  if (easing === "ease-in-out") return progress * progress * (3 - 2 * progress);
+  return progress;
 }
 
 function interpolateTransform<TTransform extends AnimationTransform>(
@@ -55,6 +58,6 @@ export function evaluateAnimationTrack<TTransform extends AnimationTransform>(
   const from = keyframes[rightIndex - 1];
   const to = keyframes[rightIndex];
   const segmentProgress = (normalized - from.progress) / (to.progress - from.progress);
-  const easedProgress = from.easing === "ease-in-out" ? easeInOut(segmentProgress) : segmentProgress;
+  const easedProgress = applyEasing(segmentProgress, from.easing);
   return interpolateTransform(from.transform, to.transform, easedProgress);
 }

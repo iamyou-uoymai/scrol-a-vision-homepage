@@ -4,7 +4,7 @@ const cueTracks: CompositionCueTrack[] = ["camera", "character", "dialogue", "so
 const primaryFunctions: PrimaryNarrativeFunction[] = ["INTRODUCE", "CHANGE", "REVEAL", "EMPHASIZE", "RESOLVE", "INTERRUPT"];
 const dynamicShapes: DynamicShape[] = ["FLAT", "ASCENDING", "DESCENDING", "PEAK", "VALLEY", "OSCILLATING"];
 const layerKinds = ["background", "character", "dialogue"] as const;
-const easingModes: EasingMode[] = ["linear", "ease-in-out"];
+const easingModes: EasingMode[] = ["linear", "ease-in", "ease-out", "ease-in-out"];
 
 export class StoryFormatError extends Error {
   constructor(message: string) {
@@ -92,8 +92,8 @@ function validateKeyframes<TTransform extends CameraTransform | LayerTransform>(
       throw new StoryFormatError(`${keyframePath}.progress must be strictly increasing; duplicate or out-of-order keyframes are not allowed.`);
     }
     previousProgress = progress;
-    if (typeof keyframe.easing !== "string" || !easingModes.includes(keyframe.easing as EasingMode)) {
-      throw new StoryFormatError(`${keyframePath}.easing must be linear or ease-in-out.`);
+    if (keyframe.easing !== undefined && (typeof keyframe.easing !== "string" || !easingModes.includes(keyframe.easing as EasingMode))) {
+      throw new StoryFormatError(`${keyframePath}.easing must be linear, ease-in, ease-out, or ease-in-out.`);
     }
     if (!isRecord(keyframe.transform)) throw new StoryFormatError(`${keyframePath}.transform must be an object.`);
     requireAllowedKeys(keyframe.transform, transformKeys, `${keyframePath}.transform`);

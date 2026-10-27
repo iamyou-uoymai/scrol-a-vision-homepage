@@ -18,13 +18,13 @@ export interface CameraTransform {
   rotation: number;
 }
 
-export type EasingMode = "linear" | "ease-in-out";
+export type EasingMode = "linear" | "ease-in" | "ease-out" | "ease-in-out";
 
 export interface Keyframe<TTransform extends CameraTransform | LayerTransform> {
   id: string;
   progress: NormalizedProgress;
   transform: TTransform;
-  easing: EasingMode;
+  easing?: EasingMode;
 }
 
 export interface ShotAnimation {

@@ -74,6 +74,30 @@ describe("deterministic composition preview", () => {
     expect(repeated).toEqual(first);
   });
 
+  it("evaluates selected camera and layer easing identically for direct and reverse traversal seeks", () => {
+    const source = createShot("shot-eased", 0, 100);
+    const layerId = "layer-shot-eased";
+    const layerTrack = source.animation.layers[layerId];
+    const shot: Shot = {
+      ...source,
+      animation: {
+        camera: [{ ...source.animation.camera[0], easing: "ease-in" }, source.animation.camera[1]],
+        layers: { [layerId]: [{ ...layerTrack[0], easing: "ease-out" }, layerTrack[1]] },
+      },
+    };
+    const path = weightedPath([shot], [1]);
+    const before = JSON.stringify(shot);
+    const direct = activePreview(path, 0.25);
+
+    expect(direct.cameraTransform.x).toBeCloseTo(6.25);
+    expect(direct.layerTransforms[layerId].x).toBeCloseTo(43.75);
+    activePreview(path, 0.82);
+    const reverse = activePreview(path, 0.25);
+
+    expect(reverse).toEqual(direct);
+    expect(JSON.stringify(shot)).toBe(before);
+  });
+
   it("maps Shot-local coordinates through the compiled interval, not an assumed equal share", () => {
     const coordinate = traversalCoordinateForShotProgress(path, "shot-b", 0.5);
     const resolved = activePreview(path, coordinate ?? 0);
@@ -102,13 +126,15 @@ describe("deterministic composition preview", () => {
 
   it("does not mutate authored story data and preserves it through save/reload", () => {
     const story = JSON.parse(JSON.stringify(sampleStory)) as typeof sampleStory;
+    const sceneShots = story.composition.chapters[0].scenes[0].shots;
     const storage = new Map<string, string>();
     const adapter = {
       getItem: (key: string) => storage.get(key) ?? null,
       setItem: (key: string, value: string) => storage.set(key, value),
     };
+    sceneShots[0].animation.camera[0].easing = "ease-in";
+    sceneShots[0].animation.layers["layer-traveler"][0].easing = "ease-out";
     const before = serializeStory(story);
-    const sceneShots = story.composition.chapters[0].scenes[0].shots;
     const samplePath = weightedPath(sceneShots, sceneShots.map(() => 1));
 
     resolveCompositionPreview(samplePath, 0.37);

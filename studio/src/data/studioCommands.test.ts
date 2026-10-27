@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { sampleStory } from "./sampleStory";
 import { addCreativeInterval, duplicateShotKeyframe, insertShotKeyframe, removeCreativeInterval, removeShotKeyframe, reorderSceneShot, updateCreativeInterval, updateShotKeyframe, updateShotLayer } from "./studioCommands";
-import type { Keyframe, LayerTransform, Scene, Story } from "../types/story";
+import type { Keyframe, LayerTransform, Scene, Shot, Story } from "../types/story";
 
 const scene = sampleStory.composition.chapters[0].scenes[0];
 
@@ -84,6 +84,18 @@ describe("composition editing commands", () => {
     expect(updated.animation.layers[layerId]).toHaveLength(shot.animation.layers[layerId].length);
   });
 
+  it("updates outgoing easing without changing keyframe identity or transform", () => {
+    const shot = scene.shots[0];
+    const target = { type: "camera" } as const;
+    const original = shot.animation.camera[0];
+    const updated = updateShotKeyframe(shot, target, original.id, { easing: "ease-out" });
+
+    expect(updated.animation.camera[0]).toEqual({ ...original, easing: "ease-out" });
+    expect(shot.animation.camera[0]).toEqual(original);
+    expect(updated.animation.layers).toBe(shot.animation.layers);
+    expect(updated.layers).toBe(shot.layers);
+  });
+
   it("inserts a complete layer keyframe in Shot-local order without changing other data", () => {
     const shot = scene.shots[0];
     const layerId = "layer-traveler";
@@ -161,11 +173,35 @@ describe("composition editing commands", () => {
       id: selectedFrame.id,
       progress: selectedFrame.progress,
       transform: { ...selectedFrame.transform, x: 47, rotation: 4 },
+      easing: selectedFrame.easing,
     });
     expect(updated.layers.find((item) => item.id === layerId)).toBe(layer);
     expect(updated.cues).toBe(shot.cues);
     expect(updated.animation.camera).toBe(shot.animation.camera);
     expect(selectedFrame.transform.x).toBe(44.5);
+  });
+
+  it("preserves omitted easing during keyframe transform edits and duplication", () => {
+    const sourceShot = scene.shots[0];
+    const layerId = "layer-traveler";
+    const originalTrack = sourceShot.animation.layers[layerId];
+    const frameWithoutEasing = { ...originalTrack[1] };
+    delete frameWithoutEasing.easing;
+    const shot: Shot = {
+      ...sourceShot,
+      animation: {
+        ...sourceShot.animation,
+        layers: { ...sourceShot.animation.layers, [layerId]: [originalTrack[0], frameWithoutEasing] },
+      },
+    };
+    const target = { type: "layer", layerId } as const;
+    const updated = updateShotKeyframe(shot, target, frameWithoutEasing.id, { transform: { x: 48 } });
+    const duplicated = duplicateShotKeyframe(updated, target, frameWithoutEasing.id, "keyframe-copy-no-easing", 0.72);
+
+    expect(updated.animation.layers[layerId][1]).toMatchObject({ id: frameWithoutEasing.id, transform: { x: 48 } });
+    expect(updated.animation.layers[layerId][1]).not.toHaveProperty("easing");
+    expect(duplicated.animation.layers[layerId][2]).not.toHaveProperty("easing");
+    expect(duplicated.animation.layers[layerId][2].id).toBe("keyframe-copy-no-easing");
   });
 
   it("stores overlapping typed intervals as explicit shot-local composition data", () => {

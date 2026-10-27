@@ -44,6 +44,7 @@ export function KeyframeInspector({ keyframe, target, targetLabel, playhead, key
   const duplicateProgress = duplicatePosition.trim() ? Number(duplicatePosition) / 100 : Number.NaN;
   const duplicatePositionValid = Number.isFinite(duplicateProgress) && duplicateProgress >= 0 && duplicateProgress <= 1;
   const duplicatePositionOccupied = duplicatePositionValid && keyframePositions.some((position) => Math.abs(position - duplicateProgress) < 1e-9);
+  const hasFollowingKeyframe = keyframePositions.some((position) => position > keyframe.progress);
 
   useEffect(() => {
     setDuplicatePosition((playhead * 100).toFixed(1));
@@ -80,11 +81,14 @@ export function KeyframeInspector({ keyframe, target, targetLabel, playhead, key
           <span>Ease to next</span>
           <select
             className="keyframe-easing-select"
-            value={keyframe.easing}
+            value={keyframe.easing ?? "linear"}
             aria-label="Keyframe easing"
+            disabled={!hasFollowingKeyframe}
             onChange={(event) => onUpdate({ easing: event.target.value as AnimationKeyframe["easing"] })}
           >
             <option value="linear">Linear</option>
+            <option value="ease-in">Ease in</option>
+            <option value="ease-out">Ease out</option>
             <option value="ease-in-out">Ease in / out</option>
           </select>
         </label>

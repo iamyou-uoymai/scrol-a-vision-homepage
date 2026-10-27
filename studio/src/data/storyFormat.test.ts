@@ -76,6 +76,46 @@ describe("portable story format", () => {
     expect(imported.composition.chapters[0].scenes[0].shots[0].animation.camera[1]).toEqual(cameraKeyframe);
   });
 
+  it("round-trips all easing modes through export, import, save, and reload", () => {
+    const story = copySample();
+    const shot = story.composition.chapters[0].scenes[0].shots[0];
+    shot.animation.camera[0].easing = "ease-in";
+    shot.animation.camera[1].easing = "ease-out";
+    shot.animation.layers["layer-traveler"][0].easing = "ease-in-out";
+    shot.animation.layers["layer-traveler"][1].easing = "linear";
+
+    const imported = parseImportedStory(serializeStory(story));
+    const storage = createMemoryStorage();
+    saveStoredStory(storage, imported);
+    const reloaded = loadStoredStory(storage).story;
+    const reloadedShot = reloaded.composition.chapters[0].scenes[0].shots[0];
+
+    expect(reloadedShot.animation.camera.map((frame) => frame.easing)).toEqual(["ease-in", "ease-out"]);
+    expect(reloadedShot.animation.layers["layer-traveler"].map((frame) => frame.easing)).toEqual(["ease-in-out", "linear"]);
+    expect(reloadedShot.animation.camera.map((frame) => frame.id)).toEqual(shot.animation.camera.map((frame) => frame.id));
+  });
+
+  it("preserves omitted easing through canonical parse, save/reload, and legacy migration", () => {
+    const story = copySample();
+    const cameraFrame = story.composition.chapters[0].scenes[0].shots[0].animation.camera[0];
+    delete cameraFrame.easing;
+    const canonicalImport = parseImportedStory(serializeStory(story));
+    const storage = createMemoryStorage();
+    saveStoredStory(storage, canonicalImport);
+    const reloaded = loadStoredStory(storage).story;
+
+    expect(reloaded.composition.chapters[0].scenes[0].shots[0].animation.camera[0]).not.toHaveProperty("easing");
+    expect(serializeStory(reloaded)).toBe(serializeStory(story));
+
+    const legacy = copyLegacySampleV2();
+    const legacyFrame = legacy.chapters[0].scenes[0].shots[0].animation.camera[0];
+    delete legacyFrame.easing;
+    const migrated = parseStory(legacy);
+
+    expect(migrated.composition.chapters[0].scenes[0].shots[0].animation.camera[0]).not.toHaveProperty("easing");
+    expect(legacyFrame).not.toHaveProperty("easing");
+  });
+
   it("preserves authored shot order and per-shot animation through export, import, save, and reload", () => {
     const story = copySample();
     const scene = story.composition.chapters[0].scenes[0];
@@ -156,6 +196,18 @@ describe("portable story format", () => {
     const unknownTrack = copySample();
     (unknownTrack.composition.chapters[0].scenes[0].shots[0].animation as unknown as Record<string, unknown>).cameraTrack = [];
     expect(() => parseStory(unknownTrack)).toThrow("not part of the portable story format");
+
+    const unsupportedEasing = copySample();
+    (unsupportedEasing.composition.chapters[0].scenes[0].shots[0].animation.camera[0] as unknown as Record<string, unknown>).easing = "ease-bounce";
+    expect(() => parseStory(unsupportedEasing)).toThrow("must be linear, ease-in, ease-out, or ease-in-out");
+
+    const nonFiniteTransform = copySample();
+    nonFiniteTransform.composition.chapters[0].scenes[0].shots[0].animation.camera[0].transform.x = Number.NaN;
+    expect(() => parseStory(nonFiniteTransform)).toThrow("must be a finite number");
+
+    const incompatibleTransform = copySample();
+    (incompatibleTransform.composition.chapters[0].scenes[0].shots[0].animation.camera[0].transform as unknown as Record<string, unknown>).opacity = 50;
+    expect(() => parseStory(incompatibleTransform)).toThrow("opacity is not part of the portable story format");
   });
 
   it("rejects malformed JSON with a useful error", () => {
