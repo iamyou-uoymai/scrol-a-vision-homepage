@@ -13,6 +13,7 @@ interface MotifOccurrenceTarget {
 interface InspectorProps {
   selection: StudioObjectSelection;
   layer?: VisualLayer;
+  hasAnimationTrack?: boolean;
   cue?: CompositionCue;
   creativeInterval?: PresentationIntervalCue;
   narrativeItem?: NarrativeItem;
@@ -40,7 +41,7 @@ const transformFields = [
   { key: "opacity", label: "Opacity", min: 0, max: 100, suffix: "%" },
 ] as const;
 
-export function Inspector({ selection, layer, cue, creativeInterval, narrativeItem, motif, story, motifTargets, selectedScene, selectedShot, pathSpan, onNarrativeUpdate, onMotifUpdate, onMotifRemove, onCreativeIntervalUpdate, onCreativeIntervalRemove, onLayerUpdate, onCueUpdate, onCueRemove }: InspectorProps) {
+export function Inspector({ selection, layer, hasAnimationTrack = false, cue, creativeInterval, narrativeItem, motif, story, motifTargets, selectedScene, selectedShot, pathSpan, onNarrativeUpdate, onMotifUpdate, onMotifRemove, onCreativeIntervalUpdate, onCreativeIntervalRemove, onLayerUpdate, onCueUpdate, onCueRemove }: InspectorProps) {
   if (cue) {
     return (
       <aside className="inspector-panel" aria-label="Composition cue properties">
@@ -102,7 +103,7 @@ export function Inspector({ selection, layer, cue, creativeInterval, narrativeIt
       <div className="panel-heading"><h2>Inspector</h2><span className={`layer-type type-${layer.kind}`}>{layer.kind}</span></div>
       <label className="field-label" htmlFor="layer-name">Name</label>
       <input id="layer-name" className="text-field" value={layer.name} onChange={(event) => onLayerUpdate({ name: event.target.value })} />
-      <div className="transform-heading"><span>Transform</span><span>Canvas space</span></div>
+      <div className="transform-heading"><span>Base transform</span><span>Layer defaults</span></div>
       <div className="property-fields">
         {transformFields.map((field) => {
           const value = layer.transform[field.key];
@@ -115,7 +116,9 @@ export function Inspector({ selection, layer, cue, creativeInterval, narrativeIt
           );
         })}
       </div>
-      <p className="inspector-hint">Layer edits update the canvas immediately.</p>
+      <p className="inspector-hint">{hasAnimationTrack
+        ? "Editing the base transform. The animation track drives the Stage; select a keyframe to edit an authored state."
+        : "Layer edits update the canvas immediately."}</p>
     </aside>
   );
 }

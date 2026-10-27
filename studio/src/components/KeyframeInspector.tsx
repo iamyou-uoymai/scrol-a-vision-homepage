@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import type { ChangeEvent } from "react";
 import type { AnimationKeyframe, AnimationTarget, KeyframeUpdate } from "../types/story";
 
@@ -5,7 +6,10 @@ interface KeyframeInspectorProps {
   keyframe: AnimationKeyframe;
   target: AnimationTarget;
   targetLabel: string;
+  playhead: number;
+  keyframePositions: readonly number[];
   onUpdate: (update: KeyframeUpdate) => void;
+  onDuplicate: (progress: number) => void;
   onRemove: () => void;
 }
 
@@ -26,7 +30,8 @@ const cameraFields = [
   { key: "rotation", label: "Rotation", min: -180, max: 180, suffix: "°" },
 ] as const;
 
-export function KeyframeInspector({ keyframe, target, targetLabel, onUpdate, onRemove }: KeyframeInspectorProps) {
+export function KeyframeInspector({ keyframe, target, targetLabel, playhead, keyframePositions, onUpdate, onDuplicate, onRemove }: KeyframeInspectorProps) {
+  const [duplicatePosition, setDuplicatePosition] = useState((playhead * 100).toFixed(1));
   const fields = target.type === "camera" ? cameraFields : layerFields;
   const transform = keyframe.transform;
   const values: Record<TransformField, number> = {
@@ -36,6 +41,13 @@ export function KeyframeInspector({ keyframe, target, targetLabel, onUpdate, onR
     rotation: transform.rotation,
     opacity: "opacity" in transform ? transform.opacity : 100,
   };
+  const duplicateProgress = duplicatePosition.trim() ? Number(duplicatePosition) / 100 : Number.NaN;
+  const duplicatePositionValid = Number.isFinite(duplicateProgress) && duplicateProgress >= 0 && duplicateProgress <= 1;
+  const duplicatePositionOccupied = duplicatePositionValid && keyframePositions.some((position) => Math.abs(position - duplicateProgress) < 1e-9);
+
+  useEffect(() => {
+    setDuplicatePosition((playhead * 100).toFixed(1));
+  }, [keyframe.id, playhead]);
 
   function handleTransformChange(key: TransformField, event: ChangeEvent<HTMLInputElement>) {
     const patch = { [key]: Number(event.target.value) } as NonNullable<KeyframeUpdate["transform"]>;
@@ -77,6 +89,36 @@ export function KeyframeInspector({ keyframe, target, targetLabel, onUpdate, onR
           </select>
         </label>
       </div>
+      <div className="keyframe-duplicate-row">
+        <label className="field-group" htmlFor="duplicate-keyframe-position">
+          <span>Duplicate at</span>
+          <span className="number-field-wrap">
+            <input
+              id="duplicate-keyframe-position"
+              type="number"
+              min="0"
+              max="100"
+              step="0.1"
+              value={duplicatePosition}
+              aria-label="Duplicate keyframe at position"
+              aria-invalid={!duplicatePositionValid || duplicatePositionOccupied}
+              onChange={(event) => setDuplicatePosition(event.target.value)}
+            />
+            <i>%</i>
+          </span>
+        </label>
+        <button
+          type="button"
+          className="add-beat-button"
+          disabled={!duplicatePositionValid || duplicatePositionOccupied}
+          onClick={() => onDuplicate(duplicateProgress)}
+        >
+          Duplicate keyframe
+        </button>
+        <span className="keyframe-duplicate-hint" role="status">
+          {!duplicatePositionValid ? "Enter a position from 0% to 100%." : duplicatePositionOccupied ? "A keyframe already occupies that position." : "Copies the complete authored transform."}
+        </span>
+      </div>
       <div className="property-fields keyframe-transform-fields">
         {fields.map((field) => (
           <label className="property-field" key={field.key}>
@@ -95,6 +137,7 @@ export function KeyframeInspector({ keyframe, target, targetLabel, onUpdate, onR
           </label>
         ))}
       </div>
+      <p className="inspector-hint">Complete transform · Shot-local progress</p>
       <button type="button" className="destructive-action" onClick={onRemove}>Remove keyframe</button>
     </aside>
   );

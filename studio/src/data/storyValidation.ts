@@ -55,13 +55,11 @@ function playerCanResolveLayer(layer: VisualLayer): boolean {
   return true;
 }
 
-function collectBeats(story: Story): Array<{ beat: Beat; passageId: string; phraseId: string }> {
-  return story.movements.flatMap((movement) => movement.passages.flatMap((passage) => passage.phrases.flatMap((phrase) => (
-    phrase.beats.map((beat) => ({ beat, passageId: passage.id, phraseId: phrase.id }))
-  ))));
+function collectBeats(story: Story): Beat[] {
+  return story.movements.flatMap((movement) => movement.passages.flatMap((passage) => passage.phrases.flatMap((phrase) => phrase.beats)));
 }
 
-function appendPublishedHierarchyFindings(story: Story, findings: StoryDiagnostic[]): void {
+function appendPublishedHierarchyFindings(story: Story, findings: StoryDiagnostic[], beats: readonly Beat[]): void {
   if (story.movements.length === 0) {
     findings.push(diagnostic("structural", "STORY_REQUIRES_MOVEMENT", "error", "A conforming published Story contains at least one Movement.", "Add a Movement, or keep this empty Story as an incomplete draft.", story.id, true));
   }
@@ -85,7 +83,7 @@ function appendPublishedHierarchyFindings(story: Story, findings: StoryDiagnosti
     });
   });
 
-  collectBeats(story).forEach(({ beat }) => {
+  beats.forEach((beat) => {
     if (!beat.purpose) {
       findings.push(diagnostic("structural", "BEAT_PURPOSE_REQUIRED", "error", "A conforming published Beat needs a narrative purpose statement.", "Describe the change and its narrative relevance, not only a presentation technique.", beat.id, true));
     }
@@ -95,14 +93,13 @@ function appendPublishedHierarchyFindings(story: Story, findings: StoryDiagnosti
   });
 }
 
-function appendPlaybackFindings(story: Story, findings: StoryDiagnostic[]): void {
-  const beats = collectBeats(story);
+function appendPlaybackFindings(story: Story, findings: StoryDiagnostic[], beats: readonly Beat[]): void {
   const pauses = story.movements.flatMap((movement) => movement.passages).flatMap((passage) => passage.pauses ?? []);
   if (beats.length === 0 && pauses.length === 0) {
     findings.push(diagnostic("playback", "NO_NARRATIVE_BEATS", "warning", "No narrative Beats are available for a compiled narrative path.", "Add weighted Beats when the narrative path is ready to be reviewed.", undefined, false));
   } else {
-    const missingWeight = beats.filter(({ beat }) => beat.traversalWeight === undefined);
-    missingWeight.forEach(({ beat }) => findings.push(diagnostic(
+    const missingWeight = beats.filter((beat) => beat.traversalWeight === undefined);
+    missingWeight.forEach((beat) => findings.push(diagnostic(
       "playback",
       "TRAVERSAL_WEIGHT_REQUIRED",
       "error",
@@ -190,7 +187,7 @@ function appendPlaybackFindings(story: Story, findings: StoryDiagnostic[]): void
   });
 }
 
-function appendEditorialPrompts(story: Story, findings: StoryDiagnostic[]): void {
+function appendEditorialPrompts(story: Story, findings: StoryDiagnostic[], beats: readonly Beat[]): void {
   story.movements.forEach((movement) => {
     if (!movement.purpose && !movement.conditionNote) {
       findings.push(diagnostic("editorial", "MOVEMENT_CONDITION_REVIEW", "prompt", "What dramatic condition changes or is deliberately reframed by this Movement?", "Record the intended progression or condition note when useful to collaborators.", movement.id));
@@ -213,11 +210,10 @@ function appendEditorialPrompts(story: Story, findings: StoryDiagnostic[]): void
     });
   });
 
-  const beats = collectBeats(story);
   if (beats.length > 0) {
     findings.push(diagnostic("editorial", "PATH_SPACING_REVIEW", "prompt", "What does the relative spacing between narrative changes make possible for attention, anticipation, impact, reflection, or contrast?", "Review the derived intervals at quick and deliberate traversal speeds; this is an editorial question, not an automatic quality score."));
   }
-  beats.forEach(({ beat }) => {
+  beats.forEach((beat) => {
     if (beat.purpose && beat.primaryFunction) {
       findings.push(diagnostic("editorial", "BEAT_PURPOSE_REVIEW", "prompt", `Does the purpose for “${beat.title}” state a narrative change and its relevance rather than only a technique?`, "Use the primary function as a question for review; software cannot prove the artistic choice.", beat.id));
     }
@@ -272,9 +268,10 @@ export function validateStory(value: unknown): StoryValidationReport {
 
   report.schemaValid = true;
   report.draftSavable = true;
-  appendPublishedHierarchyFindings(story, report.structural);
-  appendPlaybackFindings(story, report.playback);
-  appendEditorialPrompts(story, report.editorial);
+  const beats = collectBeats(story);
+  appendPublishedHierarchyFindings(story, report.structural, beats);
+  appendPlaybackFindings(story, report.playback, beats);
+  appendEditorialPrompts(story, report.editorial, beats);
   report.publicationReady = ![...report.structural, ...report.playback].some((issue) => issue.blocksPublication);
   return report;
 }

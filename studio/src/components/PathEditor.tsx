@@ -1,4 +1,5 @@
 import type { CompiledPath } from "../data/pathCompiler";
+import type { CompositionPreview } from "../data/compositionPreview";
 import type { NarrativePathAllocation, NarrativeUnitView } from "../data/studioPath";
 import type { ShotPathAllocation } from "../player/progress";
 import type { StudioSelectionProjection } from "../data/studioSelection";
@@ -8,7 +9,9 @@ interface PathEditorProps {
   compositionPath: CompiledPath<ShotPathAllocation>;
   narrativePath: CompiledPath<NarrativePathAllocation>;
   selection: StudioSelectionProjection["path"];
-  previewPosition: number;
+  traversalPosition: number;
+  compositionPreview: CompositionPreview;
+  onTraversalChange: (position: number) => void;
   selectedPathSpan?: { start: number; end: number };
   onShotSelect: (shot: Shot) => void;
   onNarrativeSelect: (unit: NarrativeUnitView) => void;
@@ -28,13 +31,12 @@ function compositionIntervalSelected(
   return selection.compositionContext.shotId === interval.id;
 }
 
-export function PathEditor({ compositionPath, narrativePath, selection, previewPosition, selectedPathSpan, onShotSelect, onNarrativeSelect }: PathEditorProps) {
-  const currentShotInterval = compositionPath.intervals.find(
-    (interval) => interval.id === selection.compositionContext.shotId,
-  );
-  const compositionPreviewPosition = currentShotInterval
-    ? currentShotInterval.start + (currentShotInterval.end - currentShotInterval.start) * previewPosition
-    : undefined;
+export function PathEditor({ compositionPath, narrativePath, selection, traversalPosition, compositionPreview, onTraversalChange, selectedPathSpan, onShotSelect, onNarrativeSelect }: PathEditorProps) {
+  const compositionPreviewPosition = compositionPreview.traversalProgress;
+  const hasCompositionPath = compositionPath.intervals.length > 0;
+  const previewDescription = compositionPreview.kind === "active"
+    ? `${percent(compositionPreviewPosition)} overall, ${compositionPreview.shot.title}, ${percent(compositionPreview.shotProgress)} Shot-local`
+    : "No composition Shots";
 
   return (
     <section className="path-editor" aria-label="Path Editor">
@@ -67,7 +69,7 @@ export function PathEditor({ compositionPath, narrativePath, selection, previewP
                 </button>
               );
             })}
-            {compositionPreviewPosition !== undefined && (
+            {hasCompositionPath && (
               <span
                 className="path-preview-marker"
                 style={{ left: `${compositionPreviewPosition * 100}%` }}
@@ -89,9 +91,33 @@ export function PathEditor({ compositionPath, narrativePath, selection, previewP
               )}
           </div>
         ) : <span className="path-editor-empty">No composition intervals.</span>}
-        <output className="path-preview-position">
-          {compositionPreviewPosition === undefined ? "" : percent(compositionPreviewPosition)}
+        <output className="path-preview-position">{hasCompositionPath ? percent(compositionPreviewPosition) : ""}</output>
+      </div>
+      <div className="traversal-scrubber" role="group" aria-label="Composition traversal scrubber">
+        <div className="traversal-scrubber-controls">
+          <button type="button" className="traversal-endpoint-button" aria-label="Go to beginning of composition path" disabled={!hasCompositionPath} onClick={() => onTraversalChange(0)}>Start</button>
+          <label className="traversal-scrubber-label" htmlFor="composition-traversal-position">TRAVERSAL</label>
+          <input
+            id="composition-traversal-position"
+            className="traversal-scrubber-range"
+            type="range"
+            min="0"
+            max="10000"
+            step="1"
+            value={Math.round(traversalPosition * 10000)}
+            aria-label="Composition traversal position"
+            aria-valuetext={previewDescription}
+            disabled={!hasCompositionPath}
+            onChange={(event) => onTraversalChange(Number(event.target.value) / 10000)}
+          />
+          <button type="button" className="traversal-endpoint-button" aria-label="Go to end of composition path" disabled={!hasCompositionPath} onClick={() => onTraversalChange(1)}>End</button>
+        </div>
+        <output className="traversal-scrubber-readout" aria-live="polite">
+          {compositionPreview.kind === "active" ? (
+            <><strong>{percent(compositionPreviewPosition)}</strong><span>overall · {compositionPreview.shot.title} · {percent(compositionPreview.shotProgress)} Shot-local</span></>
+          ) : "No composition Shots"}
         </output>
+        <p className="traversal-scrubber-limit">Studio preview resolves camera and layer transforms; cue tracks, transitions, audio, and narrative Beat paths are not executed.</p>
       </div>
       <div className="path-editor-row">
         <span className="path-editor-label">Narrative</span>

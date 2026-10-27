@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useReducer, useState } from "react";
-import { DEFAULT_CAMERA_TRANSFORM, evaluateAnimationTrack, getAnimationTrack } from "./data/animation";
+import { clampProgress, DEFAULT_CAMERA_TRANSFORM, evaluateAnimationTrack, getAnimationTrack } from "./data/animation";
+import { resolveCompositionPreview, traversalCoordinateForShotProgress } from "./data/compositionPreview";
 import { createSampleStory, firstShot, loadStoredStory, parseImportedStory, saveStoredStory, serializeStory } from "./data/storyStorage";
 import { Inspector } from "./components/Inspector";
 import { KeyframeInspector } from "./components/KeyframeInspector";
@@ -12,7 +13,9 @@ import { compileNarrativePath, listNarrativeUnits, narrativeSelectionSpan, proje
 import type { NarrativeUnitView } from "./data/studioPath";
 import { projectStudioSelection, studioEditorReducer } from "./data/studioSelection";
 import type { StudioEditorState, StudioObjectSelection } from "./data/studioSelection";
-import { reorderSceneShot, updateShotKeyframe, updateShotLayer } from "./data/studioCommands";
+import { duplicateShotKeyframe, insertShotKeyframe, reorderSceneShot, removeShotKeyframe, updateShotKeyframe, updateShotLayer } from "./data/studioCommands";
+import { resolveLayerTransformEditTarget } from "./data/stageInteraction";
+import type { StageTransformEditTarget } from "./data/stageInteraction";
 import { addCreativeInterval, removeCreativeInterval, updateCreativeInterval } from "./data/studioCommands";
 import { addBeat, addMovement, addPassage, addPause, addPhrase, addMotif, findNarrativeItem, moveNarrativeItem, removeBeat, removeMovement, removePassage, removePause, removePhrase, removeMotif, updateBeat, updateMovement, updateMotif, updatePassage, updatePause, updatePhrase } from "./data/narrativeCommands";
 import type { NarrativeItem, NarrativeKind } from "./data/narrativeCommands";
@@ -32,12 +35,15 @@ function defaultSelection(shot: Shot): StudioObjectSelection {
 function createInitialEditorState(story: Story): StudioEditorState {
   const scene = story.composition.chapters[0]?.scenes[0];
   const shot = scene?.shots[0];
+  const shotPosition = 0.32;
+  const path = compileShotPath(scene?.shots);
   return {
     selection: {
       object: shot ? defaultSelection(shot) : { domain: "composition", kind: "scene", id: scene?.id ?? "" },
       compositionContext: { sceneId: scene?.id ?? "", shotId: shot?.id ?? "" },
     },
-    previewPosition: 0.32,
+    shotPosition,
+    traversalPosition: shot ? traversalCoordinateForShotProgress(path, shot.id, shotPosition) ?? 0 : 0,
   };
 }
 
@@ -70,6 +76,24 @@ function defaultAnimationTarget(shot: Shot): AnimationTarget {
   return layer ? { type: "layer", layerId: layer.id } : { type: "camera" };
 }
 
+function createUniqueStoryId(story: Story, prefix: string): string {
+  const usedIds = new Set<string>();
+  const collectIds = (value: unknown) => {
+    if (Array.isArray(value)) {
+      value.forEach(collectIds);
+      return;
+    }
+    if (typeof value !== "object" || value === null) return;
+    const record = value as Record<string, unknown>;
+    if (typeof record.id === "string") usedIds.add(record.id);
+    Object.values(record).forEach(collectIds);
+  };
+  collectIds(story);
+  let id = `${prefix}-${crypto.randomUUID()}`;
+  while (usedIds.has(id)) id = `${prefix}-${crypto.randomUUID()}`;
+  return id;
+}
+
 export function StudioApp() {
   const [initialProject] = useState(() => {
     try {
@@ -84,7 +108,8 @@ export function StudioApp() {
   const [feedback, setFeedback] = useState("");
   const [editorState, dispatchEditor] = useReducer(studioEditorReducer, initialProject.story, createInitialEditorState);
   const selection = editorState.selection;
-  const playhead = editorState.previewPosition;
+  const playhead = editorState.shotPosition;
+  const traversalPosition = editorState.traversalPosition;
   const [animationTarget, setAnimationTarget] = useState<AnimationTarget>(() => {
     const shot = firstShot(initialProject.story);
     return shot ? defaultAnimationTarget(shot) : { type: "camera" };
@@ -97,7 +122,7 @@ export function StudioApp() {
   }
 
   function setPlayhead(position: number) {
-    dispatchEditor({ type: "set-preview-position", position });
+    dispatchEditor({ type: "set-shot-position", position });
   }
 
   useEffect(() => {
@@ -118,6 +143,12 @@ export function StudioApp() {
   const currentScene = currentChapter?.scenes.find((scene) => scene.id === selection.compositionContext.sceneId) ?? currentChapter?.scenes[0];
   const activeShot = currentScene?.shots.find((shot) => shot.id === selection.compositionContext.shotId) ?? currentScene?.shots[0];
   const compositionPath = useMemo(() => compileShotPath(currentScene?.shots), [currentScene?.shots]);
+  const compositionPreview = useMemo(
+    () => resolveCompositionPreview(compositionPath, traversalPosition),
+    [compositionPath, traversalPosition],
+  );
+  const previewShot = compositionPreview.kind === "active" ? compositionPreview.shot : undefined;
+  const isActiveShotPreview = previewShot?.id === activeShot?.id;
   const narrativePath = useMemo(() => compileNarrativePath(story), [story]);
   const narrativeUnits = useMemo(() => listNarrativeUnits(story), [story]);
   const validationReport = useMemo(() => validateStory(story), [story]);
@@ -153,6 +184,32 @@ export function StudioApp() {
   const selectedKeyframe = selectedObject.domain === "composition" && selectedObject.kind === "keyframe"
     ? getAnimationTrack(activeShot, selectedObject.target).find((keyframe) => keyframe.id === selectedObject.id)
     : undefined;
+  const stageSelectedLayer = previewShot?.layers.find((layer) => layer.id === selectionProjection.stage.selectedLayerId);
+  const stageSelectedLayerTrack = stageSelectedLayer && previewShot ? previewShot.animation.layers[stageSelectedLayer.id] ?? [] : [];
+  const stageSelectedLayerKeyframe = isActiveShotPreview && selectedObject.domain === "composition"
+    && selectedObject.kind === "keyframe"
+    && selectedObject.target.type === "layer"
+    && selectedObject.target.layerId === stageSelectedLayer?.id
+    ? selectedKeyframe
+    : undefined;
+  const stageTransformEditTarget = stageSelectedLayer && isActiveShotPreview && compositionPreview.kind === "active"
+    ? resolveLayerTransformEditTarget(stageSelectedLayerTrack, stageSelectedLayerKeyframe?.id, compositionPreview.shotProgress)
+    : undefined;
+  const stageTransformEditMessage = previewing
+    ? "Preview mode is read-only; leave preview to manipulate this layer."
+    : previewShot && !isActiveShotPreview
+      ? `Previewing ${previewShot.title}; ${activeShot.title} remains the editing target.`
+    : !previewShot
+      ? "No composition Shot is available at this traversal position."
+    : !stageSelectedLayer
+      ? undefined
+      : stageTransformEditTarget?.kind === "base"
+        ? "Drag the layer to move it; use the corner and rotation handles to transform it."
+        : stageTransformEditTarget?.kind === "keyframe" && stageSelectedLayerKeyframe
+          ? `Editing the authored keyframe at ${Math.round(stageSelectedLayerKeyframe.progress * 100)}%. Other keyframes are unchanged.`
+          : stageSelectedLayerKeyframe
+            ? `Move the playhead to ${Math.round(stageSelectedLayerKeyframe.progress * 100)}% to edit this keyframe.`
+            : "This layer is animated. Select one of its keyframes at the playhead to edit without changing the animation curve.";
   const selectedNarrativeUnit = selectedObject.domain === "narrative"
     ? narrativeUnits.find((unit) => unit.id === selectedObject.id)
     : undefined;
@@ -192,6 +249,26 @@ export function StudioApp() {
     const target = selectedObject.target;
     if (target.type === "camera") selectedKeyframeTargetLabel = "Camera";
     else selectedKeyframeTargetLabel = activeShot.layers.find((layer) => layer.id === target.layerId)?.name ?? "Layer";
+  }
+
+  function setShotPositionAtPath(path: ReturnType<typeof compileShotPath>, shotId: string, position: number) {
+    const normalizedPosition = clampProgress(position);
+    setPlayhead(normalizedPosition);
+    const coordinate = traversalCoordinateForShotProgress(path, shotId, normalizedPosition);
+    if (coordinate !== undefined) dispatchEditor({ type: "set-traversal-position", position: coordinate });
+  }
+
+  function setActiveShotPosition(position: number) {
+    setShotPositionAtPath(compositionPath, activeShot.id, position);
+  }
+
+  function setTraversalPosition(position: number) {
+    const normalizedPosition = clampProgress(position);
+    dispatchEditor({ type: "set-traversal-position", position: normalizedPosition });
+    const preview = resolveCompositionPreview(compositionPath, normalizedPosition);
+    if (preview.kind === "active" && preview.shot.id === activeShot.id) {
+      setPlayhead(preview.shotProgress);
+    }
   }
 
   function commitStory(update: (current: Story) => Story) {
@@ -254,13 +331,16 @@ export function StudioApp() {
   }
 
   function removeNarrativeUnit(unit: NarrativeUnitView) {
-    commitStory((current) => {
-      if (unit.kind === "movement") return removeMovement(current, unit.id);
-      if (unit.kind === "passage") return removePassage(current, unit.id);
-      if (unit.kind === "phrase") return removePhrase(current, unit.id);
-      if (unit.kind === "pause") return removePause(current, unit.id);
-      return removeBeat(current, unit.id);
-    });
+    const removeUnit = unit.kind === "movement"
+      ? removeMovement
+      : unit.kind === "passage"
+        ? removePassage
+        : unit.kind === "phrase"
+          ? removePhrase
+          : unit.kind === "pause"
+            ? removePause
+            : removeBeat;
+    commitStory((current) => removeUnit(current, unit.id));
     const parentSelection = unit.kind === "beat" && unit.phraseId
       ? { domain: "narrative" as const, kind: "phrase" as const, id: unit.phraseId }
       : unit.kind === "pause" && unit.passageId
@@ -270,21 +350,15 @@ export function StudioApp() {
         : unit.kind === "passage"
           ? { domain: "narrative" as const, kind: "movement" as const, id: unit.movementId }
           : undefined;
-    const nextStory = unit.kind === "movement"
-      ? removeMovement(story, unit.id)
-      : unit.kind === "passage"
-        ? removePassage(story, unit.id)
-        : unit.kind === "phrase"
-          ? removePhrase(story, unit.id)
-          : unit.kind === "pause"
-            ? removePause(story, unit.id)
-            : removeBeat(story, unit.id);
-    if (parentSelection && findNarrativeItem(nextStory, parentSelection.kind, parentSelection.id)) {
+    const remainingMovements = unit.kind === "movement"
+      ? story.movements.filter((movement) => movement.id !== unit.id)
+      : story.movements;
+    if (parentSelection && findNarrativeItem(story, parentSelection.kind, parentSelection.id)) {
       setSelection(parentSelection);
     } else {
-      const firstNarrativeUnit = listNarrativeUnits(nextStory)[0];
-      setSelection(firstNarrativeUnit
-        ? { domain: "narrative", kind: firstNarrativeUnit.kind, id: firstNarrativeUnit.id }
+      const firstMovement = remainingMovements[0];
+      setSelection(firstMovement
+        ? { domain: "narrative", kind: "movement", id: firstMovement.id }
         : defaultSelection(activeShot));
     }
   }
@@ -309,6 +383,7 @@ export function StudioApp() {
   }
 
   function addIntentionalInterval(kind: PresentationIntervalCue["kind"]) {
+    if (!isActiveShotPreview) return;
     const start = Math.min(playhead, 0.74);
     const interval: PresentationIntervalCue = {
       id: crypto.randomUUID(),
@@ -334,6 +409,14 @@ export function StudioApp() {
     updateActiveShot((shot) => updateShotLayer(shot, id, update));
   }
 
+  function updateLayerTransformFromStage(id: string, transform: Partial<LayerTransform>, target: StageTransformEditTarget) {
+    if (target.kind === "base") {
+      updateLayer(id, { transform });
+      return;
+    }
+    updateKeyframe({ type: "layer", layerId: id }, target.keyframeId, { transform });
+  }
+
   function updateCue(id: string, update: Partial<CompositionCue>) {
     updateActiveShot((shot) => ({
       ...shot,
@@ -348,54 +431,53 @@ export function StudioApp() {
   }
 
   function addKeyframe(target: AnimationTarget) {
+    if (!isActiveShotPreview) {
+      setFeedback("Preview this Shot before adding a keyframe at its Shot-local position.");
+      return;
+    }
     const existing = getAnimationTrack(activeShot, target).find((keyframe) => Math.abs(keyframe.progress - playhead) < 1e-9);
     if (existing) {
+      setActiveShotPosition(existing.progress);
       setSelection({ domain: "composition", kind: "keyframe", target, id: existing.id });
       setFeedback(`Selected the existing keyframe at ${Math.round(existing.progress * 100)}%.`);
       return;
     }
 
-    if (target.type === "camera") {
-      const transform = evaluateAnimationTrack(activeShot.animation.camera, playhead) ?? DEFAULT_CAMERA_TRANSFORM;
-      const keyframe: Keyframe<CameraTransform> = {
-        id: crypto.randomUUID(),
-        progress: playhead,
-        transform: { ...transform },
-        easing: "ease-in-out",
-      };
-      updateActiveShot((shot) => ({
-        ...shot,
-        animation: { ...shot.animation, camera: [...shot.animation.camera, keyframe].sort((left, right) => left.progress - right.progress) },
-      }));
-      setSelection({ domain: "composition", kind: "keyframe", target, id: keyframe.id });
-      setAnimationTarget(target);
-      setFeedback("");
-      return;
-    }
-
-    const layer = activeShot.layers.find((item) => item.id === target.layerId);
-    if (!layer) return;
-    const transform = evaluateAnimationTrack(activeShot.animation.layers[target.layerId], playhead) ?? layer.transform;
-    const keyframe: Keyframe<LayerTransform> = {
-      id: crypto.randomUUID(),
+    const layer = target.type === "layer" ? activeShot.layers.find((item) => item.id === target.layerId) : undefined;
+    if (target.type === "layer" && !layer) return;
+    const transform = target.type === "camera"
+      ? evaluateAnimationTrack(activeShot.animation.camera, playhead) ?? DEFAULT_CAMERA_TRANSFORM
+      : evaluateAnimationTrack(activeShot.animation.layers[target.layerId], playhead) ?? layer!.transform;
+    const keyframe: Keyframe<CameraTransform | LayerTransform> = {
+      id: createUniqueStoryId(story, "keyframe"),
       progress: playhead,
       transform: { ...transform },
       easing: "ease-in-out",
     };
-    updateActiveShot((shot) => {
-      const track = shot.animation.layers[target.layerId] ?? [];
-      return {
-        ...shot,
-        animation: {
-          ...shot.animation,
-          layers: {
-            ...shot.animation.layers,
-            [target.layerId]: [...track, keyframe].sort((left, right) => left.progress - right.progress),
-          },
-        },
-      };
-    });
+    try {
+      insertShotKeyframe(activeShot, target, keyframe);
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : "Could not add keyframe.");
+      return;
+    }
+    updateActiveShot((shot) => insertShotKeyframe(shot, target, keyframe));
+    setActiveShotPosition(keyframe.progress);
     setSelection({ domain: "composition", kind: "keyframe", target, id: keyframe.id });
+    setAnimationTarget(target);
+    setFeedback("");
+  }
+
+  function duplicateKeyframe(target: AnimationTarget, id: string, progress: number) {
+    const duplicateId = createUniqueStoryId(story, "keyframe");
+    try {
+      duplicateShotKeyframe(activeShot, target, id, duplicateId, progress);
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : "Could not duplicate keyframe.");
+      return;
+    }
+    updateActiveShot((shot) => duplicateShotKeyframe(shot, target, id, duplicateId, progress));
+    setActiveShotPosition(progress);
+    setSelection({ domain: "composition", kind: "keyframe", target, id: duplicateId });
     setAnimationTarget(target);
     setFeedback("");
   }
@@ -405,38 +487,21 @@ export function StudioApp() {
     const keyframe = track.find((item) => item.id === id);
     if (!keyframe) return;
     const progress = update.progress ?? keyframe.progress;
-    if (!Number.isFinite(progress) || progress < 0 || progress > 1) {
-      setFeedback("Keyframe position must be between 0% and 100%.");
+    try {
+      updateShotKeyframe(activeShot, target, id, { ...update, progress });
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : "Could not update keyframe.");
       return;
     }
-    if (track.some((item) => item.id !== id && Math.abs(item.progress - progress) < 1e-9)) {
-      setFeedback("Another keyframe already exists at that position.");
-      return;
-    }
-
-    if (target.type === "camera") {
-      updateActiveShot((shot) => updateShotKeyframe(shot, target, id, { ...update, progress }));
-    } else {
-      updateActiveShot((shot) => updateShotKeyframe(shot, target, id, { ...update, progress }));
+    updateActiveShot((shot) => updateShotKeyframe(shot, target, id, { ...update, progress }));
+    if (update.progress !== undefined && selectedObject.domain === "composition" && selectedObject.kind === "keyframe" && selectedObject.id === id) {
+      setActiveShotPosition(progress);
     }
     setFeedback("");
   }
 
   function removeKeyframe(target: AnimationTarget, id: string) {
-    if (target.type === "camera") {
-      updateActiveShot((shot) => ({
-        ...shot,
-        animation: { ...shot.animation, camera: shot.animation.camera.filter((frame) => frame.id !== id) },
-      }));
-    } else {
-      updateActiveShot((shot) => {
-        const layers = { ...shot.animation.layers };
-        const remaining = (layers[target.layerId] ?? []).filter((frame) => frame.id !== id);
-        if (remaining.length) layers[target.layerId] = remaining;
-        else delete layers[target.layerId];
-        return { ...shot, animation: { ...shot.animation, layers } };
-      });
-    }
+    updateActiveShot((shot) => removeShotKeyframe(shot, target, id));
     setSelection(target.type === "layer"
       ? { domain: "composition", kind: "layer", id: target.layerId }
       : defaultSelection(activeShot));
@@ -446,24 +511,29 @@ export function StudioApp() {
   function selectAnimationTarget(target: AnimationTarget) {
     setAnimationTarget(target);
     const keyframe = getAnimationTrack(activeShot, target)[0];
-    if (keyframe) setSelection({ domain: "composition", kind: "keyframe", target, id: keyframe.id });
+    if (keyframe) {
+      setActiveShotPosition(keyframe.progress);
+      setSelection({ domain: "composition", kind: "keyframe", target, id: keyframe.id });
+    }
     else if (target.type === "layer") setSelection({ domain: "composition", kind: "layer", id: target.layerId });
     else setSelection(defaultSelection(activeShot));
   }
 
   function addShot() {
     const nextShot = createShot(currentScene.shots.length + 1);
+    const nextShots = [...currentScene.shots, nextShot];
     commitStory((currentStory) => ({
       ...currentStory,
       composition: { ...currentStory.composition, chapters: currentStory.composition.chapters.map((chapter) => ({
         ...chapter,
         scenes: chapter.scenes.map((scene) => scene.id === currentScene.id
-          ? { ...scene, shots: [...scene.shots, nextShot] }
+          ? { ...scene, shots: nextShots }
           : scene),
       })) },
     }));
     setSelection(defaultSelection(nextShot), { sceneId: currentScene.id, shotId: nextShot.id });
     setAnimationTarget(defaultAnimationTarget(nextShot));
+    setShotPositionAtPath(compileShotPath(nextShots), nextShot.id, playhead);
   }
 
   function moveShot(id: string, direction: -1 | 1) {
@@ -492,6 +562,7 @@ export function StudioApp() {
     }));
     setSelection(defaultSelection(scene.shots[0]), { sceneId: scene.id, shotId: scene.shots[0].id });
     setAnimationTarget(defaultAnimationTarget(scene.shots[0]));
+    setShotPositionAtPath(compileShotPath(scene.shots), scene.shots[0].id, playhead);
   }
 
   function removeSelectedScene() {
@@ -507,12 +578,14 @@ export function StudioApp() {
     }));
     setSelection(defaultSelection(nextShot), { sceneId: nextScene.id, shotId: nextShot.id });
     setAnimationTarget(defaultAnimationTarget(nextShot));
+    setShotPositionAtPath(compileShotPath(nextScene.shots), nextShot.id, playhead);
   }
 
   function selectScene(scene: Scene) {
     const nextShot = scene.shots[0];
     setSelection({ domain: "composition", kind: "scene", id: scene.id }, { sceneId: scene.id, shotId: nextShot.id });
     setAnimationTarget(defaultAnimationTarget(nextShot));
+    setShotPositionAtPath(compileShotPath(scene.shots), nextShot.id, playhead);
   }
 
   function removeSelectedShot() {
@@ -529,9 +602,11 @@ export function StudioApp() {
     }));
     setSelection(defaultSelection(remainingShots[0]), { sceneId: currentScene.id, shotId: remainingShots[0].id });
     setAnimationTarget(defaultAnimationTarget(remainingShots[0]));
+    setShotPositionAtPath(compileShotPath(remainingShots), remainingShots[0].id, playhead);
   }
 
   function addCue(track: CompositionCueTrack) {
+    if (!isActiveShotPreview) return;
     const labels: Record<CompositionCueTrack, string> = {
       camera: "Camera move",
       character: "Character beat",
@@ -638,7 +713,7 @@ export function StudioApp() {
       setCanAutoSave(true);
       setSelection(defaultSelection(importedShot), { sceneId: importedScene.id, shotId: importedShot.id });
       setAnimationTarget(defaultAnimationTarget(importedShot));
-      setPlayhead(0.32);
+      setShotPositionAtPath(compileShotPath(importedScene.shots), importedShot.id, 0.32);
       setFeedback(`Imported ${imported.title}.`);
     } catch (error) {
       const message = error instanceof Error ? error.message : "The project could not be imported.";
@@ -655,7 +730,7 @@ export function StudioApp() {
     setCanAutoSave(true);
     setSelection(defaultSelection(resetShot), { sceneId: resetScene.id, shotId: resetShot.id });
     setAnimationTarget(defaultAnimationTarget(resetShot));
-    setPlayhead(0.32);
+    setShotPositionAtPath(compileShotPath(resetScene.shots), resetShot.id, 0.32);
     setFeedback("Sample project restored.");
   }
 
@@ -691,6 +766,7 @@ export function StudioApp() {
             onShotSelect={(shot) => {
               setSelection({ domain: "composition", kind: "shot", id: shot.id }, { sceneId: currentScene.id, shotId: shot.id });
               setAnimationTarget(defaultAnimationTarget(shot));
+              setShotPositionAtPath(compositionPath, shot.id, playhead);
             }}
             onShotMove={moveShot}
             onNarrativeSelect={selectNarrativeUnit}
@@ -710,20 +786,31 @@ export function StudioApp() {
           <div className="composition-heading">
             <div>
               <span className="eyebrow">{currentScene.title}</span>
-              <h1>{activeShot.title}</h1>
+              <h1>{previewShot?.title ?? activeShot.title}</h1>
             </div>
-            {previewing && <span className="preview-note">Shot preview · no story playback</span>}
+            {previewing
+              ? <span className="preview-note">Shot preview · no story playback</span>
+              : previewShot && !isActiveShotPreview && <span className="preview-note">Editing {activeShot.title}</span>}
           </div>
           <ShotCanvas
-            shot={activeShot}
-            playhead={playhead}
+            shot={previewShot ?? activeShot}
+            playhead={compositionPreview.kind === "active" ? compositionPreview.shotProgress : 0}
+            resolvedPreview={compositionPreview.kind === "active" ? compositionPreview : undefined}
             selection={selectionProjection.stage}
-            selectedCue={selectedCue}
+            selectedCue={isActiveShotPreview ? selectedCue : undefined}
             narrativeSelectionLabel={selectedNarrativeUnit?.title}
+            transformEditTarget={stageTransformEditTarget}
+            transformEditMessage={stageTransformEditMessage}
+            editable={!previewing && isActiveShotPreview}
             onLayerSelect={(id) => {
-              setSelection({ domain: "composition", kind: "layer", id });
+              const stageShot = previewShot ?? activeShot;
+              setSelection({ domain: "composition", kind: "layer", id }, { sceneId: currentScene.id, shotId: stageShot.id });
               setAnimationTarget({ type: "layer", layerId: id });
+              if (compositionPreview.kind === "active") {
+                setShotPositionAtPath(compositionPath, stageShot.id, compositionPreview.shotProgress);
+              }
             }}
+            onLayerTransformChange={updateLayerTransformFromStage}
           />
         </main>
         {!previewing && (selectedObject.domain === "composition" && selectedObject.kind === "keyframe" && selectedKeyframe ? (
@@ -731,7 +818,10 @@ export function StudioApp() {
               keyframe={selectedKeyframe}
               target={selectedObject.target}
               targetLabel={selectedKeyframeTargetLabel}
+              playhead={playhead}
+              keyframePositions={getAnimationTrack(activeShot, selectedObject.target).map((frame) => frame.progress)}
               onUpdate={(update) => updateKeyframe(selectedObject.target, selectedObject.id, update)}
+              onDuplicate={(progress) => duplicateKeyframe(selectedObject.target, selectedObject.id, progress)}
               onRemove={() => removeKeyframe(selectedObject.target, selectedObject.id)}
             />
           ) : (
@@ -751,6 +841,7 @@ export function StudioApp() {
               onCreativeIntervalUpdate={editIntentionalInterval}
               onCreativeIntervalRemove={deleteIntentionalInterval}
               layer={selectedLayer}
+              hasAnimationTrack={Boolean(selectedLayer && activeShot.animation.layers[selectedLayer.id]?.length)}
               cue={selectedCue}
               onLayerUpdate={(update) => selectedLayer && updateLayer(selectedLayer.id, update)}
               onCueUpdate={(update) => selectedCue && updateCue(selectedCue.id, update)}
@@ -761,17 +852,22 @@ export function StudioApp() {
       {!previewing && (
         <Timeline
           shot={activeShot}
+          isActiveShotPreview={isActiveShotPreview}
+          traversalPosition={traversalPosition}
+          compositionPreview={compositionPreview}
+          onTraversalChange={setTraversalPosition}
           compositionPath={compositionPath}
           narrativePath={narrativePath}
           selection={selectionProjection.path}
           selectedPathSpan={selectedPathSpan}
-          onPathShotSelect={(shot) => setSelection(
-            { domain: "composition", kind: "shot", id: shot.id },
-            { sceneId: currentScene.id, shotId: shot.id },
-          )}
+          onPathShotSelect={(shot) => {
+            setSelection({ domain: "composition", kind: "shot", id: shot.id }, { sceneId: currentScene.id, shotId: shot.id });
+            setAnimationTarget(defaultAnimationTarget(shot));
+            setShotPositionAtPath(compositionPath, shot.id, playhead);
+          }}
           onNarrativeSelect={selectNarrativeUnit}
           playhead={playhead}
-          onPlayheadChange={setPlayhead}
+          onPlayheadChange={setActiveShotPosition}
           onCueSelect={(id) => setSelection({ domain: "composition", kind: "cue", id })}
           onCueAdd={addCue}
           onCreativeIntervalAdd={addIntentionalInterval}
@@ -780,8 +876,11 @@ export function StudioApp() {
           selectedKeyframe={selectedObject.domain === "composition" && selectedObject.kind === "keyframe" ? { id: selectedObject.id, target: selectedObject.target } : undefined}
           onAnimationTargetChange={selectAnimationTarget}
           onKeyframeAdd={addKeyframe}
+          onKeyframeMove={(target, id, progress) => updateKeyframe(target, id, { progress })}
           onKeyframeSelect={(target, id) => {
             setAnimationTarget(target);
+            const keyframe = getAnimationTrack(activeShot, target).find((frame) => frame.id === id);
+            if (keyframe) setActiveShotPosition(keyframe.progress);
             setSelection({ domain: "composition", kind: "keyframe", target, id });
           }}
         />

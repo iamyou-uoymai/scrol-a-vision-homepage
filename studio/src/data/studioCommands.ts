@@ -76,27 +76,101 @@ function mergeFrame<TTransform extends CameraTransform | LayerTransform>(
   };
 }
 
+function framesForTarget<TTransform extends CameraTransform | LayerTransform>(
+  shot: Shot,
+  target: AnimationTarget,
+): Keyframe<TTransform>[] {
+  return (target.type === "camera" ? shot.animation.camera : shot.animation.layers[target.layerId] ?? []) as Keyframe<TTransform>[];
+}
+
+function assertKeyframePosition(
+  track: readonly Keyframe<CameraTransform | LayerTransform>[],
+  progress: number,
+  excludingId?: string,
+): void {
+  if (!Number.isFinite(progress) || progress < 0 || progress > 1) {
+    throw new RangeError("Keyframe position must be between 0% and 100%.");
+  }
+  if (track.some((frame) => frame.id !== excludingId && Math.abs(frame.progress - progress) < 1e-9)) {
+    throw new RangeError("Another keyframe already exists at that position.");
+  }
+}
+
+function allShotKeyframeIds(shot: Shot): Set<string> {
+  return new Set([
+    ...shot.animation.camera.map((frame) => frame.id),
+    ...Object.values(shot.animation.layers).flatMap((track) => track.map((frame) => frame.id)),
+  ]);
+}
+
+function updateTargetTrack<TTransform extends CameraTransform | LayerTransform>(
+  shot: Shot,
+  target: AnimationTarget,
+  track: Keyframe<TTransform>[],
+): Shot {
+  if (target.type === "camera") return { ...shot, animation: { ...shot.animation, camera: track as Keyframe<CameraTransform>[] } };
+  const layers = { ...shot.animation.layers };
+  if (track.length) layers[target.layerId] = track as Keyframe<LayerTransform>[];
+  else delete layers[target.layerId];
+  return { ...shot, animation: { ...shot.animation, layers } as ShotAnimation };
+}
+
+export function insertShotKeyframe<TTransform extends CameraTransform | LayerTransform>(
+  shot: Shot,
+  target: AnimationTarget,
+  keyframe: Keyframe<TTransform>,
+): Shot {
+  if (target.type === "layer" && !shot.layers.some((layer) => layer.id === target.layerId)) {
+    throw new RangeError(`Layer ${target.layerId} was not found in shot ${shot.id}.`);
+  }
+  const track = framesForTarget<TTransform>(shot, target);
+  assertKeyframePosition(track, keyframe.progress);
+  if (typeof keyframe.id !== "string" || keyframe.id.trim().length === 0 || allShotKeyframeIds(shot).has(keyframe.id)) {
+    throw new RangeError(`Keyframe ID "${keyframe.id}" is empty or already exists in shot ${shot.id}.`);
+  }
+  return updateTargetTrack(shot, target, [...track, keyframe].sort((left, right) => left.progress - right.progress));
+}
+
+export function duplicateShotKeyframe<TTransform extends CameraTransform | LayerTransform>(
+  shot: Shot,
+  target: AnimationTarget,
+  keyframeId: string,
+  duplicateId: string,
+  progress: number,
+): Shot {
+  const source = framesForTarget<TTransform>(shot, target).find((frame) => frame.id === keyframeId);
+  if (!source) throw new RangeError(`Keyframe ${keyframeId} was not found.`);
+  if (duplicateId === keyframeId || allShotKeyframeIds(shot).has(duplicateId)) {
+    throw new RangeError(`Keyframe ID "${duplicateId}" already exists in shot ${shot.id}.`);
+  }
+  return insertShotKeyframe(shot, target, {
+    ...source,
+    id: duplicateId,
+    progress,
+    transform: { ...source.transform },
+  });
+}
+
+export function removeShotKeyframe(shot: Shot, target: AnimationTarget, keyframeId: string): Shot {
+  const track = framesForTarget(shot, target);
+  const remaining = track.filter((frame) => frame.id !== keyframeId);
+  if (remaining.length === track.length) return shot;
+  return updateTargetTrack(shot, target, remaining);
+}
+
 export function updateShotKeyframe(
   shot: Shot,
   target: AnimationTarget,
   keyframeId: string,
   update: KeyframeUpdate,
 ): Shot {
-  if (target.type === "camera") {
-    const camera = shot.animation.camera
-      .map((keyframe) => keyframe.id === keyframeId
-        ? mergeFrame(keyframe, update, update.progress ?? keyframe.progress)
-        : keyframe)
-      .sort((left, right) => left.progress - right.progress);
-    return { ...shot, animation: { ...shot.animation, camera } };
-  }
-
-  const layers = { ...shot.animation.layers };
-  const frames = (layers[target.layerId] ?? [])
-    .map((keyframe) => keyframe.id === keyframeId
-      ? mergeFrame(keyframe, update, update.progress ?? keyframe.progress)
-      : keyframe)
+  const track = framesForTarget(shot, target);
+  const existing = track.find((frame) => frame.id === keyframeId);
+  if (!existing) return shot;
+  const progress = update.progress ?? existing.progress;
+  assertKeyframePosition(track, progress, keyframeId);
+  const frames = track
+    .map((keyframe) => keyframe.id === keyframeId ? mergeFrame(keyframe, update, progress) : keyframe)
     .sort((left, right) => left.progress - right.progress);
-  layers[target.layerId] = frames;
-  return { ...shot, animation: { ...shot.animation, layers } as ShotAnimation };
+  return updateTargetTrack(shot, target, frames);
 }

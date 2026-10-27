@@ -19,12 +19,14 @@ export interface StudioSelection {
 
 export interface StudioEditorState {
   selection: StudioSelection;
-  previewPosition: number;
+  shotPosition: number;
+  traversalPosition: number;
 }
 
 export type StudioEditorAction =
   | { type: "select"; selection: StudioSelection }
-  | { type: "set-preview-position"; position: number };
+  | { type: "set-shot-position"; position: number }
+  | { type: "set-traversal-position"; position: number };
 
 export interface StudioSelectionProjection {
   navigator: {
@@ -46,7 +48,8 @@ export interface StudioSelectionProjection {
 
 export function studioEditorReducer(state: StudioEditorState, action: StudioEditorAction): StudioEditorState {
   if (action.type === "select") return { ...state, selection: action.selection };
-  return { ...state, previewPosition: action.position };
+  if (action.type === "set-shot-position") return { ...state, shotPosition: action.position };
+  return { ...state, traversalPosition: action.position };
 }
 
 export function projectStudioSelection(selection: StudioSelection): StudioSelectionProjection {

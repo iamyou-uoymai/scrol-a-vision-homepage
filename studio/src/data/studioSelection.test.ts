@@ -19,6 +19,20 @@ describe("Studio selection projections", () => {
     expect(projection.inspector).toBe(selectedLayer);
   });
 
+  it("projects a selected layer keyframe onto its layer in the Stage while retaining keyframe Inspector selection", () => {
+    const selectedKeyframe = {
+      domain: "composition",
+      kind: "keyframe",
+      id: "keyframe-traveler-arrival",
+      target: { type: "layer", layerId: "layer-traveler" },
+    } as const;
+    const projection = projectStudioSelection({ object: selectedKeyframe, compositionContext });
+
+    expect(projection.stage).toMatchObject({ selectedLayerId: "layer-traveler", narrativeSelection: false });
+    expect(projection.inspector).toBe(selectedKeyframe);
+    expect(projection.path.object).toBe(selectedKeyframe);
+  });
+
   it("keeps narrative selection visible without implying a composition or Shot link", () => {
     const selectedBeat = { domain: "narrative", kind: "beat", id: "beat-1" } as const;
     const projection = projectStudioSelection({ object: selectedBeat, compositionContext });
@@ -33,17 +47,21 @@ describe("Studio selection projections", () => {
     expect(projection.inspector).toBe(selectedBeat);
   });
 
-  it("keeps selection and preview position independent", () => {
+  it("keeps traversal position, Shot-local position, and selection independent", () => {
     const selection = { object: { domain: "composition", kind: "shot", id: "shot-1" } as const, compositionContext };
-    const initial: StudioEditorState = { selection, previewPosition: 0.32 };
-    const previewMoved = studioEditorReducer(initial, { type: "set-preview-position", position: 0.8 });
-    const selectionChanged = studioEditorReducer(previewMoved, {
+    const initial: StudioEditorState = { selection, shotPosition: 0.32, traversalPosition: 0.16 };
+    const traversalMoved = studioEditorReducer(initial, { type: "set-traversal-position", position: 0.8 });
+    const selectionChanged = studioEditorReducer(traversalMoved, {
       type: "select",
       selection: { object: { domain: "narrative", kind: "phrase", id: "phrase-1" }, compositionContext },
     });
+    const shotPositionMoved = studioEditorReducer(selectionChanged, { type: "set-shot-position", position: 0.72 });
 
-    expect(previewMoved.selection).toBe(selection);
-    expect(selectionChanged.previewPosition).toBe(0.8);
+    expect(traversalMoved.selection).toBe(selection);
+    expect(traversalMoved.shotPosition).toBe(0.32);
+    expect(selectionChanged.traversalPosition).toBe(0.8);
+    expect(shotPositionMoved.traversalPosition).toBe(0.8);
+    expect(shotPositionMoved.shotPosition).toBe(0.72);
     expect(selectionChanged.selection.object).toEqual({ domain: "narrative", kind: "phrase", id: "phrase-1" });
   });
 });

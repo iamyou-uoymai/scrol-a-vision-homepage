@@ -1,15 +1,21 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import type { AnimationTarget, CompositionCueTrack, PresentationIntervalCue, Shot } from "../types/story";
 import type { CompiledPath } from "../data/pathCompiler";
+import type { CompositionPreview } from "../data/compositionPreview";
 import type { NarrativePathAllocation, NarrativeUnitView } from "../data/studioPath";
 import type { StudioSelectionProjection } from "../data/studioSelection";
+import { shotProgressFromTrackPointer } from "../data/stageInteraction";
 import { PathEditor } from "./PathEditor";
 import type { ShotPathAllocation } from "../player/progress";
 
 interface TimelineProps {
   shot: Shot;
   playhead: number;
+  isActiveShotPreview: boolean;
+  traversalPosition: number;
+  compositionPreview: CompositionPreview;
+  onTraversalChange: (position: number) => void;
   onPlayheadChange: (progress: number) => void;
   onCueSelect: (id: string) => void;
   onCueAdd: (track: CompositionCueTrack) => void;
@@ -20,6 +26,7 @@ interface TimelineProps {
   onAnimationTargetChange: (target: AnimationTarget) => void;
   onKeyframeAdd: (target: AnimationTarget) => void;
   onKeyframeSelect: (target: AnimationTarget, id: string) => void;
+  onKeyframeMove: (target: AnimationTarget, id: string, progress: number) => void;
   compositionPath: CompiledPath<ShotPathAllocation>;
   narrativePath: CompiledPath<NarrativePathAllocation>;
   selection: StudioSelectionProjection["path"];
@@ -44,9 +51,11 @@ const trackColors: Record<CompositionCueTrack, string> = {
   scroll: "#e6cf7d",
 };
 
-export function Timeline({ shot, playhead, onPlayheadChange, onCueSelect, onCueAdd, onCreativeIntervalAdd, onCreativeIntervalSelect, animationTarget, selectedKeyframe, onAnimationTargetChange, onKeyframeAdd, onKeyframeSelect, compositionPath, narrativePath, selection, selectedPathSpan, onPathShotSelect, onNarrativeSelect }: TimelineProps) {
+export function Timeline({ shot, playhead, isActiveShotPreview, traversalPosition, compositionPreview, onTraversalChange, onPlayheadChange, onCueSelect, onCueAdd, onCreativeIntervalAdd, onCreativeIntervalSelect, animationTarget, selectedKeyframe, onAnimationTargetChange, onKeyframeAdd, onKeyframeSelect, onKeyframeMove, compositionPath, narrativePath, selection, selectedPathSpan, onPathShotSelect, onNarrativeSelect }: TimelineProps) {
   const [newTrack, setNewTrack] = useState<CompositionCueTrack>("camera");
   const [newIntervalKind, setNewIntervalKind] = useState<PresentationIntervalCue["kind"] | "">("");
+  const keyframePointerRef = useRef<{ pointerId: number; keyframeId: string; startX: number; moved: boolean } | undefined>(undefined);
+  const suppressKeyframeClickRef = useRef(false);
   const targetValue = animationTarget.type === "camera" ? "camera" : `layer:${animationTarget.layerId}`;
   const keyframeTracks = [
     { target: { type: "camera" } as const, label: "Camera", keyframes: shot.animation.camera },
@@ -63,7 +72,9 @@ export function Timeline({ shot, playhead, onPlayheadChange, onCueSelect, onCueA
         compositionPath={compositionPath}
         narrativePath={narrativePath}
         selection={selection}
-        previewPosition={playhead}
+        traversalPosition={traversalPosition}
+        compositionPreview={compositionPreview}
+        onTraversalChange={onTraversalChange}
         selectedPathSpan={selectedPathSpan}
         onShotSelect={onPathShotSelect}
         onNarrativeSelect={onNarrativeSelect}
@@ -75,7 +86,7 @@ export function Timeline({ shot, playhead, onPlayheadChange, onCueSelect, onCueA
           <select id="new-cue-track" value={newTrack} onChange={(event) => setNewTrack(event.target.value as CompositionCueTrack)}>
             {tracks.map((track) => <option value={track.id} key={track.id}>{track.label}</option>)}
           </select>
-          <button type="button" className="add-beat-button" onClick={() => onCueAdd(newTrack)}>Add cue</button>
+          <button type="button" className="add-beat-button" disabled={!isActiveShotPreview} onClick={() => onCueAdd(newTrack)}>Add cue</button>
           <span className="timeline-divider" aria-hidden="true" />
           <label className="track-picker-label" htmlFor="new-creative-interval">Presentation cue</label>
           <select id="new-creative-interval" value={newIntervalKind} onChange={(event) => setNewIntervalKind(event.target.value as PresentationIntervalCue["kind"] | "")}>
@@ -83,7 +94,7 @@ export function Timeline({ shot, playhead, onPlayheadChange, onCueSelect, onCueA
             <option value="silence">Silence</option>
             <option value="void">Void</option>
           </select>
-          <button type="button" className="add-beat-button" disabled={!newIntervalKind} onClick={() => {
+          <button type="button" className="add-beat-button" disabled={!newIntervalKind || !isActiveShotPreview} onClick={() => {
             if (!newIntervalKind) return;
             onCreativeIntervalAdd(newIntervalKind);
           }}>Add interval</button>
@@ -103,10 +114,10 @@ export function Timeline({ shot, playhead, onPlayheadChange, onCueSelect, onCueA
             <option value="camera">Camera</option>
             {shot.layers.map((layer) => <option value={`layer:${layer.id}`} key={layer.id}>{layer.name}</option>)}
           </select>
-          <button type="button" className="add-beat-button keyframe-add-button" onClick={() => onKeyframeAdd(animationTarget)}>Add keyframe</button>
+          <button type="button" className="add-beat-button keyframe-add-button" disabled={!isActiveShotPreview} onClick={() => onKeyframeAdd(animationTarget)}>Add keyframe</button>
           <span className="timeline-divider" aria-hidden="true" />
-          <span className="progress-label">PLAYHEAD</span>
-          <output className="progress-value" aria-live="polite">{Math.round(playhead * 100)}%</output>
+          <span className="progress-label">SHOT LOCAL</span>
+          <output className="progress-value" aria-live="polite">{Math.round(playhead * 100)}%{isActiveShotPreview ? "" : " · not previewed"}</output>
           <input
             className="playhead-range"
             type="range"
@@ -114,7 +125,7 @@ export function Timeline({ shot, playhead, onPlayheadChange, onCueSelect, onCueA
             max="100"
             step="1"
             value={Math.round(playhead * 100)}
-            aria-label="Timeline playhead progress"
+            aria-label="Selected Shot local position"
             onChange={(event) => onPlayheadChange(Number(event.target.value) / 100)}
           />
         </div>
@@ -144,7 +155,7 @@ export function Timeline({ shot, playhead, onPlayheadChange, onCueSelect, onCueA
                     <span>{cue.label}</span>
                   </button>
                 ))}
-                <span className="playhead-line" style={{ left: `${playhead * 100}%` }} aria-hidden="true" />
+                {isActiveShotPreview && <span className="playhead-line" style={{ left: `${playhead * 100}%` }} aria-hidden="true" />}
               </div>
             </div>
           );
@@ -184,16 +195,16 @@ export function Timeline({ shot, playhead, onPlayheadChange, onCueSelect, onCueA
       )}
       {keyframeTracks.length > 0 && (
         <div className="timeline-keyframes" aria-label="Animation keyframes">
-          <div className="keyframe-tracks-heading">ANIMATION KEYFRAMES</div>
+          <div className="keyframe-tracks-heading"><span>ANIMATION KEYFRAMES</span><span>Shot-local progress · drag markers to reposition</span></div>
           <div className="timeline-tracks">
             {keyframeTracks.map((track) => (
-              <div className="track-row keyframe-track-row" key={track.target.type === "camera" ? "camera" : track.target.layerId}>
+              <div className={`track-row keyframe-track-row${targetValue === (track.target.type === "camera" ? "camera" : `layer:${track.target.layerId}`) ? " is-active-track" : ""}`} key={track.target.type === "camera" ? "camera" : track.target.layerId}>
                 <div className="track-label" title={track.label}>{track.label}</div>
                 <div className="track-lane keyframe-lane">
                   {track.keyframes.map((keyframe) => (
                     <button
                       type="button"
-                      className={`keyframe-marker${selectedKeyframe?.id === keyframe.id ? " is-selected" : ""}`}
+                      className={`keyframe-marker${selectedKeyframe?.id === keyframe.id ? " is-selected" : ""}${isActiveShotPreview && Math.abs(keyframe.progress - playhead) < 1e-4 ? " is-at-playhead" : ""}`}
                       key={keyframe.id}
                       style={{
                         left: `${keyframe.progress * 100}%`,
@@ -202,7 +213,46 @@ export function Timeline({ shot, playhead, onPlayheadChange, onCueSelect, onCueA
                       aria-label={`Select ${track.label} keyframe at ${Math.round(keyframe.progress * 100)}%`}
                       aria-pressed={selectedKeyframe?.id === keyframe.id}
                       title={`${track.label} · ${Math.round(keyframe.progress * 100)}%`}
-                      onClick={() => onKeyframeSelect(track.target, keyframe.id)}
+                      onClick={() => {
+                        if (suppressKeyframeClickRef.current) {
+                          suppressKeyframeClickRef.current = false;
+                          return;
+                        }
+                        onKeyframeSelect(track.target, keyframe.id);
+                      }}
+                      onPointerDown={(event) => {
+                        if (event.button !== 0) return;
+                        const lane = event.currentTarget.parentElement;
+                        if (!lane) return;
+                        suppressKeyframeClickRef.current = false;
+                        event.currentTarget.setPointerCapture(event.pointerId);
+                        keyframePointerRef.current = { pointerId: event.pointerId, keyframeId: keyframe.id, startX: event.clientX, moved: false };
+                        onKeyframeSelect(track.target, keyframe.id);
+                      }}
+                      onPointerMove={(event) => {
+                        const pointer = keyframePointerRef.current;
+                        if (!pointer || pointer.pointerId !== event.pointerId || pointer.keyframeId !== keyframe.id) return;
+                        const lane = event.currentTarget.parentElement;
+                        if (!lane) return;
+                        if (!pointer.moved && Math.abs(event.clientX - pointer.startX) < 3) return;
+                        const bounds = lane.getBoundingClientRect();
+                        if (bounds.width <= 0) return;
+                        const progress = shotProgressFromTrackPointer(event.clientX, bounds.left + lane.clientLeft, lane.clientWidth);
+                        if (progress === undefined) return;
+                        const current = track.keyframes.find((frame) => frame.id === keyframe.id);
+                        if (current && Math.abs(progress - current.progress) < 1e-5) return;
+                        pointer.moved = true;
+                        onKeyframeMove(track.target, keyframe.id, progress);
+                      }}
+                      onPointerUp={(event) => {
+                        const pointer = keyframePointerRef.current;
+                        if (pointer?.pointerId !== event.pointerId) return;
+                        suppressKeyframeClickRef.current = pointer.moved;
+                        keyframePointerRef.current = undefined;
+                      }}
+                      onPointerCancel={(event) => {
+                        if (keyframePointerRef.current?.pointerId === event.pointerId) keyframePointerRef.current = undefined;
+                      }}
                     />
                   ))}
                   <span className="playhead-line" style={{ left: `${playhead * 100}%` }} aria-hidden="true" />
@@ -212,7 +262,7 @@ export function Timeline({ shot, playhead, onPlayheadChange, onCueSelect, onCueA
           </div>
         </div>
       )}
-      <div className="timeline-caption"><span>{shot.title}</span><span>Scroll progress drives authored camera and layer keyframes.</span></div>
+      <div className="timeline-caption"><span>{shot.title}</span><span>Keyframe positions are Shot-local; traversal preview is shown above.</span></div>
     </section>
   );
 }

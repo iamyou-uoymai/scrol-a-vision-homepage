@@ -16,7 +16,7 @@ Use a near-black charcoal background, warm off-white typography, restrained ambe
 2. Hero: “Stories, directed by scrolling.” with a cinematic illustrated landscape and concept CTA.
 3. Problem: “Animation tools understand motion. Storytellers think in scenes.”
 4. Workflow: Compose, Direct, Publish.
-5. Directing model: Project → Chapter → Scene → Shot → Beat, plus an illustrative camera/character/dialogue/sound/scroll timeline.
+5. Directing model: Story → Movement → Passage → Phrase → Beat, alongside an illustrative composition path for Shots and presentation cues. Do not imply Beat-to-Shot links.
 6. Principles: Story first, reader-controlled pacing, creative collaboration, portable stories.
 7. Closing CTA: “Help shape a medium where movement, rhythm and narrative are composed together.”
 8. Footer with current year.

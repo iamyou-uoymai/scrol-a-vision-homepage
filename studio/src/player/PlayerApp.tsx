@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent, CSSProperties } from "react";
 import cityBackdrop from "../../../assets/player-city-demo.jpg";
 import travelerArtwork from "../../../assets/traveler.svg";
@@ -6,6 +6,8 @@ import { loadStoredStory, parseImportedStory } from "../data/storyStorage";
 import { sampleStory } from "../data/sampleStory";
 import type { LayerTransform, Shot, Story, VisualLayer } from "../types/story";
 import { DEFAULT_CAMERA_TRANSFORM, evaluateAnimationTrack } from "../data/animation";
+import { fitFrameInViewport, UNIVERSAL_FRAME_SIZE } from "../data/viewportFrame";
+import type { FittedFrame } from "../data/viewportFrame";
 import {
   compileShotPath,
   mapScrollToProgress,
@@ -22,12 +24,12 @@ function loadPlayerStory(): Story {
   }
 }
 
-function getLayerStyle(kind: VisualLayer["kind"], transform: LayerTransform): CSSProperties {
+function getLayerStyle(kind: VisualLayer["kind"], transform: LayerTransform, universalFrame = false): CSSProperties {
   const width = kind === "background"
     ? "100%"
     : kind === "character"
-      ? "clamp(150px, 19vw, 270px)"
-      : "min(35rem, calc(100vw - 40px))";
+      ? universalFrame ? "19%" : "clamp(150px, 19vw, 270px)"
+      : universalFrame ? "88%" : "min(35rem, calc(100vw - 40px))";
   const height = kind === "background" ? "100%" : kind === "character" ? "72%" : "auto";
 
   return {
@@ -52,15 +54,37 @@ function layerTransformAtProgress(
 }
 
 export function PlayerApp() {
+  const universalFrameEnabled = new URLSearchParams(window.location.search).get("frame") === "1080x1920";
   const [story, setStory] = useState(loadPlayerStory);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState("");
+  const [playerFrame, setPlayerFrame] = useState<FittedFrame>({ left: 0, top: 0, width: 0, height: 0, scale: 0 });
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(
     () => window.matchMedia("(prefers-reduced-motion: reduce)").matches,
   );
   const runwayRef = useRef<HTMLDivElement>(null);
+  const playerViewportRef = useRef<HTMLElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const progressRef = useRef(0);
+
+  useLayoutEffect(() => {
+    const viewport = playerViewportRef.current;
+    if (!universalFrameEnabled || !viewport) return;
+
+    const updateFrame = () => {
+      const next = fitFrameInViewport(viewport.clientWidth, viewport.clientHeight);
+      setPlayerFrame((current) => current.left === next.left
+        && current.top === next.top
+        && current.width === next.width
+        && current.height === next.height
+        ? current
+        : next);
+    };
+    const observer = new ResizeObserver(updateFrame);
+    observer.observe(viewport);
+    updateFrame();
+    return () => observer.disconnect();
+  }, [universalFrameEnabled]);
 
   useEffect(() => {
     const previousRestoration = window.history.scrollRestoration;
@@ -181,18 +205,34 @@ export function PlayerApp() {
   const cameraStyle: CSSProperties = {
     transform: `translate3d(${camera.x}%, ${camera.y}%, 0) rotate(${camera.rotation}deg) scale(${camera.scale / 100})`,
   };
+  const playerFrameStyle: CSSProperties = {
+    left: playerFrame.left,
+    top: playerFrame.top,
+    width: UNIVERSAL_FRAME_SIZE.width,
+    height: UNIVERSAL_FRAME_SIZE.height,
+    transform: `scale(${playerFrame.scale})`,
+  };
 
   return (
     <main className="player-document" aria-label={`${story.title} player`}>
       <div className="player-runway" ref={runwayRef} style={{ height: `${100 + scene.shots.length * 200}svh` }}>
-        <section className="player-viewport" aria-label={`${scene.title}: ${shot.title}`}>
-          <div className="player-world" style={cameraStyle}>
+        <section
+          className="player-viewport"
+          data-player-frame={universalFrameEnabled ? "universal" : "legacy"}
+          aria-label={`${scene.title}: ${shot.title}`}
+          ref={playerViewportRef}
+        >
+          <div
+            className={universalFrameEnabled ? "player-frame player-frame-universal" : "player-frame player-frame-legacy"}
+            style={universalFrameEnabled ? playerFrameStyle : undefined}
+          >
+          <div className="player-world" style={universalFrameEnabled ? { ...cameraStyle, inset: 0 } : cameraStyle}>
             {backgroundLayers.map((layer) => (
               <div
                 className="player-layer player-layer-background"
                 data-layer-id={layer.id}
                 key={layer.id}
-                style={getLayerStyle(layer.kind, layerTransformAtProgress(shot, layer, localProgress, prefersReducedMotion))}
+                style={getLayerStyle(layer.kind, layerTransformAtProgress(shot, layer, localProgress, prefersReducedMotion), universalFrameEnabled)}
               >
                 {layer.assetId === "hero-scene" && <img src={cityBackdrop} alt="" draggable="false" />}
               </div>
@@ -207,7 +247,7 @@ export function PlayerApp() {
                   data-layer-id={layer.id}
                   data-layer-kind="character"
                   key={layer.id}
-                  style={getLayerStyle(layer.kind, transform)}
+                  style={getLayerStyle(layer.kind, transform, universalFrameEnabled)}
                 >
                   {artwork && <img src={artwork} alt={layer.name} draggable="false" />}
                 </div>
@@ -224,7 +264,7 @@ export function PlayerApp() {
                 ? Number(active)
                 : visibilityThroughCue(localProgress, cue);
               const style: CSSProperties = {
-                ...getLayerStyle("dialogue", baseTransform),
+                ...getLayerStyle("dialogue", baseTransform, universalFrameEnabled),
                 opacity: (baseTransform.opacity / 100) * opacity,
                 visibility: active ? "visible" : "hidden",
               };
@@ -236,12 +276,13 @@ export function PlayerApp() {
               );
             })}
             {dialogueCues.length === 0 && dialogueLayers.map((layer) => (
-              <div className="player-dialogue" key={layer.id} style={getLayerStyle(layer.kind, layerTransformAtProgress(shot, layer, progress, prefersReducedMotion))}>
+              <div className="player-dialogue" key={layer.id} style={getLayerStyle(layer.kind, layerTransformAtProgress(shot, layer, progress, prefersReducedMotion), universalFrameEnabled)}>
                 {layer.speaker && <span className="player-dialogue-speaker">{layer.speaker}</span>}
                 <p>{layer.text}</p>
               </div>
             ))}
             <div className="player-vignette" aria-hidden="true" />
+          </div>
           </div>
 
           <header className="player-chrome">

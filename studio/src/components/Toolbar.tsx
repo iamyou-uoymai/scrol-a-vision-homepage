@@ -55,7 +55,7 @@ export function Toolbar({ projectName, previewing, validationOpen, validationCou
         />
         <button type="button" className="quiet-button file-action" aria-label="Reset sample" onClick={onReset}><span className="full-action-label">Reset sample</span><span className="compact-action-label">Reset</span></button>
         <span className="toolbar-divider" aria-hidden="true" />
-        <a className="quiet-button file-action player-link" href="/player/" aria-label="Play story"><span className="full-action-label">Play story</span><span className="compact-action-label">Play</span></a>
+        <a className="quiet-button file-action player-link" href="/player/?frame=1080x1920" aria-label="Play story"><span className="full-action-label">Play story</span><span className="compact-action-label">Play</span></a>
         <button type="button" className="preview-button" onClick={onPreviewToggle} aria-pressed={previewing} aria-label={previewing ? "Edit shot" : "Preview shot"}>
           <span className="full-action-label">{previewing ? "Edit shot" : "Preview shot"}</span>
           <span className="compact-action-label">{previewing ? "Edit" : "Preview"}</span>

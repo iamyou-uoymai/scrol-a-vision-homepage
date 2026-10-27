@@ -17,7 +17,11 @@ a:focus-visible, button:focus-visible { outline: 2px solid #e8ae68; outline-offs
 .player-document { min-height: 100vh; background: #101313; }
 .player-runway { position: relative; height: 300svh; }
 .player-viewport { position: sticky; top: 0; height: 100svh; min-height: 420px; overflow: hidden; isolation: isolate; background: #171d1e; }
+.player-frame-legacy { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+.player-frame-universal { position: absolute; overflow: hidden; transform-origin: top left; pointer-events: none; background: #000; }
 .player-world { position: absolute; inset: -1px; overflow: hidden; transform-origin: 50% 50%; will-change: transform; background: #18201f; }
+.player-viewport[data-player-frame="universal"] { background: #000; }
+.player-viewport[data-player-frame="universal"] .player-world { background: #000; }
 .player-layer { position: absolute; display: block; transform-origin: 50% 50%; }
 .player-layer-background { z-index: -1; }
 .player-layer-background img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: 42% 52%; user-select: none; }
@@ -61,7 +65,7 @@ a:focus-visible, button:focus-visible { outline: 2px solid #e8ae68; outline-offs
   .player-open-button { min-height: 31px; padding-inline: 7px; font-size: 9px; }
   .player-progress-row { margin-top: 5px; }
   .player-progress-track { margin-top: -15px; }
-  .player-layer-character { width: clamp(128px, 40vw, 210px) !important; height: 66% !important; }
+  .player-viewport[data-player-frame="legacy"] .player-layer-character { width: clamp(128px, 40vw, 210px) !important; height: 66% !important; }
   .player-dialogue { padding: 13px 15px 15px; }
   .player-dialogue p { font-size: 19px; }
   .player-scene-label { right: 14px; bottom: 14px; left: 14px; font-size: 8px; }
